@@ -78,37 +78,42 @@ def discover_and_inject_binaries():
     # Fallback to imageio-ffmpeg if ffmpeg is still not found (e.g. on Vercel or minimal Linux)
     if not shutil.which("ffmpeg"):
         try:
-            import imageio_ffmpeg
-            ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
-            if ffmpeg_exe and os.path.exists(ffmpeg_exe):
-                ffmpeg_dir = os.path.dirname(ffmpeg_exe)
-                base_name = os.path.basename(ffmpeg_exe).lower()
-                expected_name = "ffmpeg.exe" if sys.platform == "win32" else "ffmpeg"
-                
-                # If the binary has a version suffix (like ffmpeg-linux64-v4.1), link or copy to standard 'ffmpeg'
-                if base_name != expected_name:
-                    target_dir = Path("/tmp/bin") if os.environ.get("VERCEL") else Path(ffmpeg_dir)
-                    target_dir.mkdir(parents=True, exist_ok=True)
-                    target_bin = target_dir / expected_name
-                    if not target_bin.exists():
-                        try:
-                            target_bin.symlink_to(ffmpeg_exe)
-                        except Exception:
+            import importlib
+            imageio_ffmpeg = None
+            try:
+                imageio_ffmpeg = importlib.import_module("imageio_ffmpeg")
+            except (ImportError, ModuleNotFoundError):
+                pass
+
+            if imageio_ffmpeg and hasattr(imageio_ffmpeg, "get_ffmpeg_exe"):
+                ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+                if ffmpeg_exe and os.path.exists(ffmpeg_exe):
+                    ffmpeg_dir = os.path.dirname(ffmpeg_exe)
+                    base_name = os.path.basename(ffmpeg_exe).lower()
+                    expected_name = "ffmpeg.exe" if sys.platform == "win32" else "ffmpeg"
+                    
+                    # If the binary has a version suffix (like ffmpeg-linux64-v4.1), link or copy to standard 'ffmpeg'
+                    if base_name != expected_name:
+                        target_dir = Path("/tmp/bin") if os.environ.get("VERCEL") else Path(ffmpeg_dir)
+                        target_dir.mkdir(parents=True, exist_ok=True)
+                        target_bin = target_dir / expected_name
+                        if not target_bin.exists():
                             try:
-                                shutil.copy2(ffmpeg_exe, target_bin)
-                                if sys.platform != "win32":
-                                    os.chmod(target_bin, 0o755)
+                                target_bin.symlink_to(ffmpeg_exe)
                             except Exception:
-                                pass
-                    if target_bin.exists():
-                        os.environ["PATH"] = str(target_dir) + os.pathsep + os.environ["PATH"]
+                                try:
+                                    shutil.copy2(ffmpeg_exe, target_bin)
+                                    if sys.platform != "win32":
+                                        os.chmod(target_bin, 0o755)
+                                except Exception:
+                                    pass
+                        if target_bin.exists():
+                            os.environ["PATH"] = str(target_dir) + os.pathsep + os.environ["PATH"]
+                        else:
+                            os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ["PATH"]
                     else:
                         os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ["PATH"]
-                else:
-                    os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ["PATH"]
-                logger.info(f"Auto-injected imageio-ffmpeg at {ffmpeg_exe} into PATH.")
-        except ImportError:
-            pass
+                    logger.info(f"Auto-injected imageio-ffmpeg at {ffmpeg_exe} into PATH.")
         except Exception as e:
             logger.warning(f"imageio-ffmpeg injection error: {e}")
 
@@ -551,9 +556,37 @@ def run_single_download(job: DownloadJob, item: TrackItem):
     if ffmpeg_dir:
         ydl_opts["ffmpeg_location"] = ffmpeg_dir
 
-    # Browser cookies
-    if opts.browser_cookies and opts.browser_cookies.lower() in ["chrome", "edge", "firefox"]:
-        ydl_opts["cookiesfrombrowser"] = (opts.browser_cookies.lower(), None, None, None)
+    # Configure extractor args to bypass YouTube bot detection on cloud/datacenter IPs (e.g. Vercel, GCP, AWS)
+    # Using mobile clients (android, ios) avoids the "Sign in to confirm you're not a bot" challenge
+    ydl_opts["extractor_args"] = {
+        "youtube": {
+            "player_client": ["android", "ios", "web"],
+            "player_skip": ["webpage", "configs"],
+        }
+    }
+    ydl_opts["http_headers"] = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+
+    # Cookie support: Check YOUTUBE_COOKIES env var, local cookies.txt, or browser cookies
+    cookie_env = os.environ.get("YOUTUBE_COOKIES") or os.environ.get("COOKIES")
+    cookies_file = BASE_DIR / "cookies.txt"
+    if cookie_env and cookie_env.strip():
+        target_cookie = Path("/tmp/cookies.txt") if os.environ.get("VERCEL") else BASE_DIR / "cookies.txt"
+        try:
+            target_cookie.write_text(cookie_env.strip(), encoding="utf-8")
+            ydl_opts["cookiefile"] = str(target_cookie)
+        except Exception as e:
+            logger.warning(f"Failed to write cookiefile from env: {e}")
+    elif cookies_file.exists():
+        ydl_opts["cookiefile"] = str(cookies_file)
+    elif opts.browser_cookies and opts.browser_cookies.lower() in ["chrome", "edge", "firefox"]:
+        if sys.platform == "win32" or not os.environ.get("VERCEL"):
+            try:
+                ydl_opts["cookiesfrombrowser"] = (opts.browser_cookies.lower(), None, None, None)
+            except Exception:
+                pass
 
     # Rate limit
     if opts.rate_limit and opts.rate_limit.strip():
@@ -633,17 +666,42 @@ def run_single_download(job: DownloadJob, item: TrackItem):
     except Exception as e:
         err_msg = str(e)
         logger.warning(f"Error downloading track {item.id} ({item.title}): {err_msg}")
+
+        # Automatic fallback retry for datacenter/cloud bot blocks using mobile player clients
+        if ("not a bot" in err_msg.lower() or "sign in to confirm" in err_msg.lower()) and not getattr(job, "_retried_bot_" + item.id, False):
+            setattr(job, "_retried_bot_" + item.id, True)
+            logger.info(f"Retrying track {item.id} using android/ios fallback client...")
+            try:
+                fallback_opts = dict(ydl_opts)
+                fallback_opts["extractor_args"] = {
+                    "youtube": {
+                        "player_client": ["android", "ios"]
+                    }
+                }
+                fallback_opts["format"] = "bestaudio/best"
+                with yt_dlp.YoutubeDL(fallback_opts) as fallback_ydl:
+                    fallback_ydl.extract_info(video_url, download=True, extra_info={"playlist_index": item.index})
+                    job.update_track(item.id, status="done", percent=100.0, speed="", eta="")
+                    job.completed_count += 1
+                    job.update_overall()
+                    return
+            except Exception as retry_err:
+                err_msg = str(retry_err)
+                logger.warning(f"Fallback retry failed for track {item.id}: {err_msg}")
+
         # Clean user-facing error message
         if "Video unavailable" in err_msg:
             clean_err = "Video unavailable or deleted"
         elif "Private video" in err_msg:
             clean_err = "Private video (needs login cookies)"
         elif "Sign in to confirm your age" in err_msg:
-            clean_err = "Age-restricted (select browser cookies)"
+            clean_err = "Age-restricted (requires cookies)"
+        elif "not a bot" in err_msg.lower() or "sign in to confirm" in err_msg.lower():
+            clean_err = "Cloud IP Bot Block: Set YOUTUBE_COOKIES env var"
         elif "WinError 32" in err_msg:
             clean_err = "Windows file lock error - retrying"
         else:
-            clean_err = err_msg.split("\n")[0][:100]
+            clean_err = err_msg.split("\n")[0][:80]
 
         job.update_track(item.id, status="failed", error=clean_err)
         job.failed_count += 1
@@ -777,10 +835,35 @@ async def extract_preview(req: PreviewRequest):
         "quiet": True,
         "no_warnings": True,
         "nocheckcertificate": True,
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["android", "ios", "web"],
+            }
+        },
+        "http_headers": {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+            "Accept-Language": "en-US,en;q=0.9",
+        }
     }
 
-    if req.cookies_browser and req.cookies_browser.lower() in ["chrome", "edge", "firefox"]:
-        ydl_opts["cookiesfrombrowser"] = (req.cookies_browser.lower(), None, None, None)
+    # Cookie support for preview
+    cookie_env = os.environ.get("YOUTUBE_COOKIES") or os.environ.get("COOKIES")
+    cookies_file = BASE_DIR / "cookies.txt"
+    if cookie_env and cookie_env.strip():
+        target_cookie = Path("/tmp/cookies.txt") if os.environ.get("VERCEL") else BASE_DIR / "cookies.txt"
+        try:
+            target_cookie.write_text(cookie_env.strip(), encoding="utf-8")
+            ydl_opts["cookiefile"] = str(target_cookie)
+        except Exception:
+            pass
+    elif cookies_file.exists():
+        ydl_opts["cookiefile"] = str(cookies_file)
+    elif req.cookies_browser and req.cookies_browser.lower() in ["chrome", "edge", "firefox"]:
+        if sys.platform == "win32" or not os.environ.get("VERCEL"):
+            try:
+                ydl_opts["cookiesfrombrowser"] = (req.cookies_browser.lower(), None, None, None)
+            except Exception:
+                pass
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:

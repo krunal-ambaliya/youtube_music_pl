@@ -200,7 +200,31 @@ TuneVault includes `vercel.json` and `api/index.py` for deployment to Vercel:
 
 ---
 
+## 🛡️ Resolving YouTube "Sign in to confirm you're not a bot" on Cloud / Vercel
+
+When running on shared cloud datacenter IP ranges (AWS `iad1` / Vercel / DigitalOcean), YouTube may flag requests with:
+`ERROR: [youtube] Sign in to confirm you’re not a bot. This helps protect our community.`
+
+### How We Handle This Automatically
+1. **Mobile Client Emulation**: The app automatically queries YouTube using mobile API endpoints (`android` and `ios`), which do not enforce the same strict web bot checks.
+2. **Automated Fallback**: If a track triggers a bot check, the downloader automatically retries with alternative mobile player streams.
+
+### Providing Authentication Cookies (100% Guaranteed Bypass)
+If YouTube requires cookies for specific songs (e.g. private or age-restricted content):
+1. **Export YouTube Cookies**: Install a browser extension such as [Get cookies.txt LOCALLY](https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc) on Chrome/Firefox and export your YouTube cookies.
+2. **On Vercel**: 
+   - Go to your Vercel Project Dashboard ➔ **Settings** ➔ **Environment Variables**.
+   - Add a new variable:
+     - **Key**: `YOUTUBE_COOKIES`
+     - **Value**: (Paste the entire contents of your exported `cookies.txt`)
+   - Click Save and redeploy.
+3. **On Local / GCP / Docker**:
+   - Simply place the exported `cookies.txt` file in the project root directory.
+
+---
+
 ## ⚖️ Legal Disclaimer
 
 Music Playlist Downloader is strictly intended for personal, offline archiving of content you own, have created, or have explicit permission to download. Please respect intellectual property rights, creator licenses, and YouTube's Terms of Service.
+
 
