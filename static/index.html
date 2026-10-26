@@ -7,460 +7,428 @@
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎵</text></svg>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/style.css">
 </head>
-<body>
-  <div class="app-layout">
-    <!-- Top Header -->
-    <header class="header glass-panel">
-      <div class="header-brand">
-        <div class="brand-icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M9 18V5l12-2v13"></path>
-            <circle cx="6" cy="18" r="3"></circle>
-            <circle cx="18" cy="16" r="3"></circle>
-          </svg>
-        </div>
-        <div>
-          <h1 class="brand-title">Music Playlist Downloader</h1>
-          <p class="brand-subtitle">Fast, high-fidelity YouTube & YouTube Music archiver</p>
+<body class="app-body">
+  <div class="app-viewport">
+    
+    <!-- Top Global Header -->
+    <header class="top-nav">
+      <div class="nav-left">
+        <div class="brand">
+          <div class="brand-logo">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9 18V5l12-2v13"></path>
+              <circle cx="6" cy="18" r="3"></circle>
+              <circle cx="18" cy="16" r="3"></circle>
+            </svg>
+          </div>
+          <div class="brand-info">
+            <span class="brand-name">Music Playlist Downloader</span>
+            <div class="brand-tags">
+              <span id="ffmpeg-pill" class="sys-badge sys-neutral" title="FFmpeg status">FFmpeg</span>
+              <span id="deno-pill" class="sys-badge sys-neutral" title="Deno runtime">Deno</span>
+              <span id="ytdlp-version-label" class="sys-badge sys-muted">yt-dlp</span>
+            </div>
+          </div>
         </div>
       </div>
 
-      <div class="header-actions">
-        <!-- System Status Pills -->
-        <div class="status-pills">
-          <span id="ffmpeg-pill" class="status-pill status-pill-neutral" title="FFmpeg status">
-            <span class="pill-dot"></span> FFmpeg
-          </span>
-          <span id="deno-pill" class="status-pill status-pill-neutral" title="Deno runtime status">
-            <span class="pill-dot"></span> Deno (JS)
-          </span>
+      <!-- Center Search & URL Input Bar -->
+      <div class="nav-center">
+        <div class="search-box">
+          <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+          </svg>
+          <input 
+            type="text" 
+            id="url-input" 
+            placeholder="Paste YouTube Music or YouTube playlist link here..."
+            autocomplete="off"
+            spellcheck="false"
+          >
+          <span id="platform-badge" class="platform-tag hidden">YouTube Music</span>
+          <button id="btn-clear-url" class="btn-icon-ghost hidden" title="Clear input">✕</button>
+          <button id="btn-fetch" class="btn btn-primary btn-sm">
+            <span class="btn-text">Fetch</span>
+            <span class="btn-spinner hidden"></span>
+          </button>
         </div>
+      </div>
 
-        <!-- Update yt-dlp Button -->
-        <button id="btn-update-ytdlp" class="btn btn-secondary btn-sm" title="Check and update yt-dlp to latest version">
-          <svg class="icon-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <!-- Right Navigation Actions & Top ZIP Button -->
+      <div class="nav-right">
+        <!-- Prominent Top ZIP Download Button -->
+        <a id="top-zip-btn" class="btn btn-success btn-sm top-zip hidden" href="#" download>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="7 10 12 15 17 10"></polyline>
+            <line x1="12" y1="15" x2="12" y2="3"></line>
+          </svg>
+          <span id="top-zip-label">Download ZIP</span>
+        </a>
+
+        <button id="btn-start-new" class="btn btn-ghost btn-sm" title="Reset and load new playlist">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          New
+        </button>
+
+        <button id="btn-update-ytdlp" class="btn btn-ghost btn-sm" title="Check & update yt-dlp">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
           </svg>
-          <span id="ytdlp-version-label">yt-dlp</span>
+          Update
         </button>
       </div>
     </header>
 
-    <!-- Missing Tools Warning Banner (Dynamic) -->
-    <div id="warning-banner" class="banner banner-warning hidden">
-      <div class="banner-icon">⚠️</div>
-      <div class="banner-body">
-        <div class="banner-title" id="warning-banner-title">Missing Prerequisite Tools</div>
-        <div class="banner-text" id="warning-banner-text">
-          FFmpeg or Deno was not detected. Audio conversion and YouTube format extraction require these tools.
+    <!-- Missing Tools Warning Banner (Only visible if ffmpeg/deno missing) -->
+    <div id="warning-banner" class="alert-banner hidden">
+      <div class="alert-content">
+        <span class="alert-icon">⚠️</span>
+        <div>
+          <strong id="warning-banner-title">Prerequisites Missing:</strong>
+          <span id="warning-banner-text">Install required tools via Windows Package Manager:</span>
+          <span id="warning-banner-commands" class="alert-cmds"></span>
         </div>
-        <div class="banner-commands" id="warning-banner-commands"></div>
       </div>
-      <div class="banner-actions">
-        <button id="btn-recheck-tools" class="btn btn-sm btn-outline">Re-check Tools</button>
-      </div>
+      <button id="btn-recheck-tools" class="btn btn-xs btn-outline">Re-check</button>
     </div>
 
-    <!-- Main Container -->
-    <main class="main-content">
-
-      <!-- Step 1: Input URL Card -->
-      <section class="card input-card glass-panel" id="section-input">
-        <div class="card-header">
-          <div class="step-badge">Step 1</div>
-          <h2 class="card-title">Paste Playlist or Song Link</h2>
-          <span id="platform-badge" class="badge badge-platform hidden">YouTube Music</span>
-        </div>
-        <div class="url-input-wrapper">
-          <div class="input-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
-              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+    <!-- Main 2-Column Split Workspace -->
+    <main class="workspace">
+      
+      <!-- ================= LEFT COLUMN: Preview & Tracklist ================= -->
+      <section class="panel panel-left" id="panel-preview-area">
+        
+        <!-- Empty State Prompt (shown initially before paste) -->
+        <div id="preview-empty-state" class="empty-state">
+          <div class="empty-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <rect x="2" y="2" width="20" height="20" rx="4"></rect>
+              <path d="m9 8 7 4-7 4V8z"></path>
             </svg>
           </div>
-          <input 
-            type="text" 
-            id="url-input" 
-            placeholder="Paste YouTube Music or YouTube link (e.g. https://music.youtube.com/playlist?list=...)"
-            autocomplete="off"
-            spellcheck="false"
-          >
-          <button id="btn-clear-url" class="btn-clear hidden" title="Clear input">✕</button>
-          <button id="btn-fetch" class="btn btn-primary">
-            <span class="btn-text">Fetch Preview</span>
-            <span class="btn-spinner hidden"></span>
-          </button>
+          <h3>No Playlist Loaded</h3>
+          <p>Paste a YouTube Music or YouTube playlist link in the search bar above to preview and download tracks.</p>
+          <div class="sample-link-box">
+            <span>Sample:</span>
+            <code id="sample-link-click">https://music.youtube.com/playlist?list=PLHfHCISsXPhw</code>
+          </div>
         </div>
-        <p class="input-hint">
-          Supports playlists, albums, and single tracks. Automatically detects link on paste and strips tracking parameters (<code>si=</code>).
-        </p>
+
+        <!-- Loading Skeleton -->
+        <div id="preview-skeleton" class="skeleton-wrap hidden">
+          <div class="skeleton-head shimmer"></div>
+          <div class="skeleton-rows">
+            <div class="skeleton-row shimmer"></div>
+            <div class="skeleton-row shimmer"></div>
+            <div class="skeleton-row shimmer"></div>
+            <div class="skeleton-row shimmer"></div>
+            <div class="skeleton-row shimmer"></div>
+          </div>
+        </div>
+
+        <!-- Loaded Playlist View -->
+        <div id="playlist-loaded-wrap" class="loaded-wrap hidden">
+          
+          <!-- Playlist Header -->
+          <div class="playlist-meta-card">
+            <img id="playlist-cover" src="" alt="Cover" class="meta-cover" loading="lazy">
+            <div class="meta-info">
+              <div class="meta-title-row">
+                <h2 id="playlist-title" class="meta-title">Playlist Title</h2>
+                <span id="playlist-platform-pill" class="pill-badge">YouTube Music</span>
+              </div>
+              <div class="meta-sub">
+                <span id="playlist-uploader" class="sub-author">Artist</span>
+                <span class="sub-dot">•</span>
+                <span id="playlist-count" class="sub-count">0 tracks</span>
+                <span class="sub-dot">•</span>
+                <span id="playlist-duration" class="sub-duration">0:00</span>
+              </div>
+            </div>
+            <div class="selection-counter-badge">
+              <span id="selected-count-label" class="counter-num">0 of 0</span>
+              <span class="counter-sub" id="selected-size-estimate">~0 MB</span>
+            </div>
+          </div>
+
+          <!-- Selection Controls Toolbar -->
+          <div class="selection-bar">
+            <div class="selection-actions">
+              <button id="btn-select-all" class="btn btn-xs btn-toolbar">All</button>
+              <button id="btn-deselect-all" class="btn btn-xs btn-toolbar">None</button>
+              <button id="btn-invert-selection" class="btn btn-xs btn-toolbar">Invert</button>
+              
+              <div class="quick-selector">
+                <span>First</span>
+                <input type="number" id="input-first-n" min="1" placeholder="10" class="input-tiny">
+                <button id="btn-apply-first-n" class="btn btn-xs btn-toolbar">Go</button>
+              </div>
+
+              <div class="quick-selector">
+                <span>#</span>
+                <input type="number" id="input-range-from" min="1" placeholder="1" class="input-tiny">
+                <span>–</span>
+                <input type="number" id="input-range-to" min="1" placeholder="20" class="input-tiny">
+                <button id="btn-apply-range" class="btn btn-xs btn-toolbar">Go</button>
+              </div>
+            </div>
+
+            <div class="filter-box">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+              <input type="text" id="track-filter-input" placeholder="Filter tracks...">
+            </div>
+          </div>
+
+          <!-- Dedicated Y-Scroll Tracklist Table -->
+          <div class="tracklist-scroll-area">
+            <table class="tracks-table">
+              <thead>
+                <tr>
+                  <th class="col-chk">
+                    <input type="checkbox" id="master-checkbox" title="Toggle all">
+                  </th>
+                  <th class="col-idx">#</th>
+                  <th class="col-thumb"></th>
+                  <th class="col-title">Title & Artist</th>
+                  <th class="col-dur">Duration</th>
+                  <th class="col-status">Status</th>
+                </tr>
+              </thead>
+              <tbody id="tracklist-tbody">
+                <!-- Injected via JavaScript -->
+              </tbody>
+            </table>
+          </div>
+
+        </div>
       </section>
 
-      <!-- Loading Skeleton Preview -->
-      <div id="preview-skeleton" class="skeleton-container hidden">
-        <div class="skeleton-header">
-          <div class="skeleton-thumb shimmer"></div>
-          <div class="skeleton-meta">
-            <div class="skeleton-line shimmer title"></div>
-            <div class="skeleton-line shimmer subtitle"></div>
-            <div class="skeleton-line shimmer meta"></div>
-          </div>
-        </div>
-        <div class="skeleton-list">
-          <div class="skeleton-row shimmer"></div>
-          <div class="skeleton-row shimmer"></div>
-          <div class="skeleton-row shimmer"></div>
-        </div>
-      </div>
+      <!-- ================= RIGHT COLUMN: Options & Live Progress ================= -->
+      <section class="panel panel-right">
 
-      <!-- Step 2: Playlist Preview & Track Selector -->
-      <section id="section-preview" class="card preview-card glass-panel hidden">
-        <!-- Playlist Header Info -->
-        <div class="playlist-header">
-          <div class="playlist-cover-wrap">
-            <img id="playlist-cover" src="" alt="Cover" class="playlist-cover" loading="lazy">
-            <div class="playlist-cover-overlay">
-              <span id="playlist-platform-pill" class="pill-platform">YouTube</span>
-            </div>
-          </div>
-          <div class="playlist-details">
-            <h2 id="playlist-title" class="playlist-title">Playlist Title</h2>
-            <div class="playlist-meta-row">
-              <span id="playlist-uploader" class="meta-item author">Curator</span>
-              <span class="meta-dot">•</span>
-              <span id="playlist-count" class="meta-item">0 tracks</span>
-              <span class="meta-dot">•</span>
-              <span id="playlist-duration" class="meta-item">0:00</span>
-            </div>
-            <div class="selection-pill" id="selection-summary-pill">
-              <span class="highlight-count" id="selected-count-label">0 of 0</span> selected
-              <span class="meta-dot">•</span>
-              <span class="highlight-size" id="selected-size-estimate">~0 MB est.</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- Filter & Selection Bar -->
-        <div class="selection-toolbar">
-          <div class="toolbar-group">
-            <button id="btn-select-all" class="btn btn-sm btn-ghost">Select All</button>
-            <button id="btn-deselect-all" class="btn btn-sm btn-ghost">Deselect All</button>
-            <button id="btn-invert-selection" class="btn btn-sm btn-ghost">Invert</button>
-          </div>
-
-          <div class="toolbar-group quick-selectors">
-            <div class="quick-input-group">
-              <label for="input-first-n">First:</label>
-              <input type="number" id="input-first-n" min="1" placeholder="10" class="mini-input">
-              <button id="btn-apply-first-n" class="btn btn-xs btn-outline">Apply</button>
-            </div>
-
-            <div class="quick-input-group">
-              <label>Range:</label>
-              <input type="number" id="input-range-from" min="1" placeholder="1" class="mini-input">
-              <span>to</span>
-              <input type="number" id="input-range-to" min="1" placeholder="15" class="mini-input">
-              <button id="btn-apply-range" class="btn btn-xs btn-outline">Apply</button>
+        <!-- Options Card -->
+        <div class="card-section options-section" id="section-options">
+          <div class="section-header">
+            <h3 class="section-title">Download Settings</h3>
+            
+            <!-- Type Toggle -->
+            <div class="segmented-control">
+              <button id="opt-type-audio" class="seg-btn active" data-type="audio">Audio Only</button>
+              <button id="opt-type-video" class="seg-btn" data-type="video">Video + Audio</button>
             </div>
           </div>
 
-          <div class="toolbar-group search-filter-group">
-            <div class="search-input-wrap">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <circle cx="11" cy="11" r="8"></circle>
-                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          <!-- Audio Configuration -->
+          <div id="audio-options-panel" class="settings-subpanel">
+            <div class="settings-grid">
+              <div class="setting-item">
+                <label class="setting-label">Audio Format</label>
+                <div class="format-chips" id="audio-format-group">
+                  <button class="chip-btn active" data-val="best">Best original</button>
+                  <button class="chip-btn" data-val="mp3">MP3</button>
+                  <button class="chip-btn" data-val="m4a">M4A</button>
+                  <button class="chip-btn" data-val="opus">OPUS</button>
+                  <button class="chip-btn" data-val="flac">FLAC</button>
+                  <button class="chip-btn" data-val="wav">WAV</button>
+                  <button class="chip-btn" data-val="ogg">OGG</button>
+                </div>
+              </div>
+
+              <div class="setting-item">
+                <label class="setting-label">Audio Quality / Bitrate</label>
+                <select id="select-audio-quality" class="pro-select">
+                  <option value="best" selected>Best available (Default)</option>
+                  <option value="320">320 kbps (CBR High)</option>
+                  <option value="256">256 kbps (High)</option>
+                  <option value="192">192 kbps (Standard)</option>
+                  <option value="128">128 kbps (Compact)</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="pro-tip">
+              💡 <span>YouTube Music web streams are max ~128–256 kbps. <em>Best original</em> preserves the exact stream without re-encoding overhead.</span>
+            </div>
+          </div>
+
+          <!-- Video Configuration -->
+          <div id="video-options-panel" class="settings-subpanel hidden">
+            <div class="settings-grid">
+              <div class="setting-item">
+                <label class="setting-label">Video Format</label>
+                <div class="format-chips" id="video-format-group">
+                  <button class="chip-btn active" data-val="mp4">MP4</button>
+                  <button class="chip-btn" data-val="mkv">MKV</button>
+                  <button class="chip-btn" data-val="webm">WEBM</button>
+                </div>
+              </div>
+
+              <div class="setting-item">
+                <label class="setting-label">Max Resolution</label>
+                <select id="select-video-quality" class="pro-select">
+                  <option value="best" selected>Best available</option>
+                  <option value="2160">2160p (4K UHD)</option>
+                  <option value="1440">1440p (2K QHD)</option>
+                  <option value="1080">1080p (Full HD)</option>
+                  <option value="720">720p (HD)</option>
+                  <option value="480">480p</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Toggles Switchboard -->
+          <div class="switches-grid">
+            <label class="switch-row">
+              <input type="checkbox" id="toggle-metadata" checked>
+              <span class="switch-slider"></span>
+              <span class="switch-label">Embed ID3 Metadata & Tags</span>
+            </label>
+
+            <label class="switch-row">
+              <input type="checkbox" id="toggle-cover" checked>
+              <span class="switch-slider"></span>
+              <span class="switch-label">Embed Cover Artwork</span>
+            </label>
+
+            <label class="switch-row">
+              <input type="checkbox" id="toggle-prefix-index" checked>
+              <span class="switch-slider"></span>
+              <span class="switch-label">Prefix Track Index (01, 02...)</span>
+            </label>
+
+            <label class="switch-row">
+              <input type="checkbox" id="toggle-skip-existing" checked>
+              <span class="switch-slider"></span>
+              <span class="switch-label">Skip Existing Files</span>
+            </label>
+
+            <label class="switch-row">
+              <input type="checkbox" id="toggle-save-thumbs">
+              <span class="switch-slider"></span>
+              <span class="switch-label">Save Standalone .jpg Image</span>
+            </label>
+
+            <label class="switch-row" id="control-embed-subs">
+              <input type="checkbox" id="toggle-subtitles">
+              <span class="switch-slider"></span>
+              <span class="switch-label">Embed Subtitles (Video)</span>
+            </label>
+          </div>
+
+          <!-- Collapsible Advanced Settings -->
+          <details class="pro-accordion">
+            <summary class="pro-accordion-summary">
+              <span>Advanced Configuration</span>
+              <span class="accordion-arrow">▾</span>
+            </summary>
+            <div class="accordion-body">
+              <div class="accordion-grid">
+                <div class="setting-item">
+                  <label class="setting-label">Filename Template</label>
+                  <input type="text" id="input-filename-template" class="pro-input mono" value="%(playlist_index)02d - %(title)s.%(ext)s">
+                </div>
+                <div class="setting-item">
+                  <label class="setting-label">Cookies from Browser</label>
+                  <select id="select-cookies-browser" class="pro-select">
+                    <option value="" selected>None (Public extraction)</option>
+                    <option value="chrome">Google Chrome</option>
+                    <option value="edge">Microsoft Edge</option>
+                    <option value="firefox">Mozilla Firefox</option>
+                  </select>
+                </div>
+                <div class="setting-item">
+                  <label class="setting-label">Concurrent Downloads: <strong id="val-concurrency">3</strong></label>
+                  <input type="range" id="slider-concurrency" min="1" max="5" value="3" class="pro-range">
+                </div>
+                <div class="setting-item">
+                  <label class="setting-label">Rate Limit (Optional)</label>
+                  <input type="text" id="input-rate-limit" class="pro-input" placeholder="e.g. 5M or leave blank">
+                </div>
+              </div>
+            </div>
+          </details>
+
+          <!-- Primary Download Action Button -->
+          <div class="download-cta-row">
+            <button id="btn-start-download" class="btn btn-primary btn-block" disabled>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="7 10 12 15 17 10"></polyline>
+                <line x1="12" y1="15" x2="12" y2="3"></line>
               </svg>
-              <input type="text" id="track-filter-input" placeholder="Filter tracks by title/artist...">
-            </div>
-          </div>
-        </div>
-
-        <!-- Scrollable Tracks List -->
-        <div class="tracklist-container">
-          <table class="tracklist-table">
-            <thead>
-              <tr>
-                <th class="th-check">
-                  <input type="checkbox" id="master-checkbox" title="Toggle all">
-                </th>
-                <th class="th-index">#</th>
-                <th class="th-thumb"></th>
-                <th class="th-title">Title & Artist</th>
-                <th class="th-duration">Duration</th>
-                <th class="th-status">Availability</th>
-              </tr>
-            </thead>
-            <tbody id="tracklist-tbody">
-              <!-- Dynamically populated rows -->
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- Step 3: Download Options -->
-      <section id="section-options" class="card options-card glass-panel hidden">
-        <div class="card-header">
-          <div class="step-badge">Step 3</div>
-          <h2 class="card-title">Choose Download Options</h2>
-        </div>
-
-        <!-- Format Type Switcher -->
-        <div class="options-row type-row">
-          <div class="pill-switcher">
-            <button id="opt-type-audio" class="pill-btn active" data-type="audio">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>
-              Audio Only
-            </button>
-            <button id="opt-type-video" class="pill-btn" data-type="video">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"></rect><line x1="7" y1="2" x2="7" y2="22"></line><line x1="17" y1="2" x2="17" y2="22"></line><line x1="2" y1="12" x2="22" y2="12"></line><line x1="2" y1="7" x2="7" y2="7"></line><line x1="2" y1="17" x2="7" y2="17"></line><line x1="17" y1="17" x2="22" y2="17"></line><line x1="17" y1="7" x2="22" y2="7"></line></svg>
-              Video + Audio
+              <span id="btn-download-label">Download Selected (0 Tracks)</span>
             </button>
           </div>
         </div>
 
-        <!-- Audio Configuration Options -->
-        <div id="audio-options-panel" class="format-panel">
-          <div class="grid-2-col">
-            <div class="form-group">
-              <label class="form-label">Audio Format</label>
-              <div class="pill-format-group" id="audio-format-group">
-                <button class="format-pill active" data-val="best">Best original (no re-encode)</button>
-                <button class="format-pill" data-val="mp3">MP3</button>
-                <button class="format-pill" data-val="m4a">M4A (AAC)</button>
-                <button class="format-pill" data-val="opus">OPUS</button>
-                <button class="format-pill" data-val="flac">FLAC</button>
-                <button class="format-pill" data-val="wav">WAV</button>
-                <button class="format-pill" data-val="ogg">OGG</button>
-              </div>
+        <!-- Live Download Progress & Queue Card -->
+        <div class="card-section progress-section hidden" id="section-progress">
+          <div class="section-header">
+            <div>
+              <h3 class="section-title" id="progress-heading">Downloading Queue...</h3>
+              <span class="section-sub" id="progress-subtext">Initializing threads...</span>
             </div>
-
-            <div class="form-group" id="audio-bitrate-group">
-              <label class="form-label">Audio Quality / Bitrate</label>
-              <select id="select-audio-quality" class="form-select">
-                <option value="best" selected>Best available (Default)</option>
-                <option value="320">320 kbps (CBR High)</option>
-                <option value="256">256 kbps (High)</option>
-                <option value="192">192 kbps (Standard)</option>
-                <option value="128">128 kbps (Compact)</option>
-              </select>
+            <div class="progress-ctrls">
+              <button id="btn-cancel-job" class="btn btn-xs btn-danger">Cancel</button>
+              <button id="btn-retry-failed" class="btn btn-xs btn-warning hidden">Retry Failed</button>
             </div>
           </div>
 
-          <!-- YouTube Music Audio Note -->
-          <div class="note-box">
-            <div class="note-icon">💡</div>
-            <div class="note-content">
-              <strong>Quality Tip:</strong> YouTube Music web streams are max ~128–256 kbps AAC/Opus. Converting to FLAC, WAV, or 320 kbps MP3 significantly increases file size without creating lost audio detail. Selecting <em>"Best original (no re-encode)"</em> downloads the highest fidelity source directly.
+          <!-- Overall Progress Bar -->
+          <div class="overall-progress-bar">
+            <div class="progress-track">
+              <div id="overall-bar-fill" class="progress-fill" style="width: 0%"></div>
+            </div>
+            <div class="progress-stats">
+              <span id="overall-percent-label">0%</span>
+              <span id="overall-counts-label">0 of 0 finished</span>
             </div>
           </div>
-        </div>
 
-        <!-- Video Configuration Options -->
-        <div id="video-options-panel" class="format-panel hidden">
-          <div class="grid-2-col">
-            <div class="form-group">
-              <label class="form-label">Video Format</label>
-              <div class="pill-format-group" id="video-format-group">
-                <button class="format-pill active" data-val="mp4">MP4</button>
-                <button class="format-pill" data-val="mkv">MKV</button>
-                <button class="format-pill" data-val="webm">WEBM</button>
-              </div>
+          <!-- Finished Delivery Action Banner (Appears on completion) -->
+          <div id="zip-delivery-card" class="delivery-banner hidden">
+            <div class="delivery-header">
+              <div class="delivery-badge-success">✓ Complete</div>
+              <h4 class="delivery-name">All tracks packaged into ZIP</h4>
             </div>
-
-            <div class="form-group">
-              <label class="form-label">Video Resolution</label>
-              <select id="select-video-quality" class="form-select">
-                <option value="best" selected>Best available</option>
-                <option value="2160">2160p (4K UHD)</option>
-                <option value="1440">1440p (2K QHD)</option>
-                <option value="1080">1080p (Full HD)</option>
-                <option value="720">720p (HD)</option>
-                <option value="480">480p (SD)</option>
-                <option value="360">360p</option>
-              </select>
-            </div>
-          </div>
-        </div>
-
-        <!-- Metadata & Tag Toggles -->
-        <div class="toggles-grid">
-          <label class="toggle-control">
-            <input type="checkbox" id="toggle-metadata" checked>
-            <span class="toggle-switch"></span>
-            <span class="toggle-text">Embed Metadata (Artist, Album, Title)</span>
-          </label>
-
-          <label class="toggle-control">
-            <input type="checkbox" id="toggle-cover" checked>
-            <span class="toggle-switch"></span>
-            <span class="toggle-text">Embed Cover Art into Audio</span>
-          </label>
-
-          <label class="toggle-control">
-            <input type="checkbox" id="toggle-save-thumbs">
-            <span class="toggle-switch"></span>
-            <span class="toggle-text">Save Standalone Thumbnail Files (.jpg)</span>
-          </label>
-
-          <label class="toggle-control">
-            <input type="checkbox" id="toggle-prefix-index" checked>
-            <span class="toggle-switch"></span>
-            <span class="toggle-text">Prefix Filename with Playlist Index (01, 02...)</span>
-          </label>
-
-          <label class="toggle-control">
-            <input type="checkbox" id="toggle-skip-existing" checked>
-            <span class="toggle-switch"></span>
-            <span class="toggle-text">Skip Already-Downloaded Files</span>
-          </label>
-
-          <label class="toggle-control" id="control-embed-subs">
-            <input type="checkbox" id="toggle-subtitles">
-            <span class="toggle-switch"></span>
-            <span class="toggle-text">Embed Subtitles (Video only)</span>
-          </label>
-        </div>
-
-        <!-- Advanced Accordion Toggle -->
-        <details class="advanced-details">
-          <summary class="advanced-summary">
-            <span>Advanced Configuration (Concurrency, Template, Cookies, Rate Limit)</span>
-          </summary>
-          <div class="advanced-content grid-2-col">
-            <div class="form-group">
-              <label class="form-label" for="input-filename-template">
-                Filename Template (Windows sanitized)
-              </label>
-              <input type="text" id="input-filename-template" class="form-input mono" value="%(playlist_index)02d - %(title)s.%(ext)s">
-              <span class="field-hint">Variables: %(playlist_index)s, %(title)s, %(artist)s, %(ext)s</span>
-            </div>
-
-            <div class="form-group">
-              <label class="form-label" for="select-cookies-browser">
-                Import Cookies from Browser (Private / Age-restricted playlists)
-              </label>
-              <select id="select-cookies-browser" class="form-select">
-                <option value="" selected>None (Standard public extraction)</option>
-                <option value="chrome">Google Chrome</option>
-                <option value="edge">Microsoft Edge</option>
-                <option value="firefox">Mozilla Firefox</option>
-              </select>
-            </div>
-
-            <div class="form-group">
-              <label class="form-label" for="slider-concurrency">
-                Concurrent Downloads: <strong id="val-concurrency">3</strong>
-              </label>
-              <input type="range" id="slider-concurrency" min="1" max="5" value="3" class="form-range">
-              <span class="field-hint">Higher values download multiple tracks simultaneously.</span>
-            </div>
-
-            <div class="form-group">
-              <label class="form-label" for="input-rate-limit">
-                Download Rate Limit (Optional)
-              </label>
-              <input type="text" id="input-rate-limit" class="form-input" placeholder="e.g. 5M or leave empty for max speed">
-            </div>
-          </div>
-        </details>
-
-        <!-- Big Download Action Bar -->
-        <div class="download-action-bar">
-          <button id="btn-start-download" class="btn btn-primary btn-lg">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-              <polyline points="7 10 12 15 17 10"></polyline>
-              <line x1="12" y1="15" x2="12" y2="3"></line>
-            </svg>
-            <span id="btn-download-label">Download Selected (0)</span>
-          </button>
-        </div>
-      </section>
-
-      <!-- Step 4 & 5: Live Download Progress & ZIP Delivery -->
-      <section id="section-progress" class="card progress-card glass-panel hidden">
-        <div class="progress-header">
-          <div>
-            <div class="step-badge">Step 4 & 5</div>
-            <h2 class="card-title" id="progress-heading">Downloading Playlist...</h2>
-            <p class="progress-sub" id="progress-subtext">Initializing workers...</p>
-          </div>
-          <div class="progress-actions">
-            <button id="btn-cancel-job" class="btn btn-danger btn-sm">Cancel Download</button>
-            <button id="btn-retry-failed" class="btn btn-warning btn-sm hidden">Retry Failed Tracks</button>
-          </div>
-        </div>
-
-        <!-- Overall Progress Bar -->
-        <div class="overall-progress-wrapper">
-          <div class="overall-bar-track">
-            <div id="overall-bar-fill" class="overall-bar-fill" style="width: 0%"></div>
-          </div>
-          <div class="overall-metrics">
-            <span id="overall-percent-label">0%</span>
-            <span id="overall-counts-label">0 of 0 completed</span>
-          </div>
-        </div>
-
-        <!-- ZIP Delivery Success Banner (Shown when finished) -->
-        <div id="zip-delivery-card" class="delivery-card hidden">
-          <div class="delivery-icon">🎉</div>
-          <div class="delivery-body">
-            <h3 class="delivery-title">All Done! Your ZIP is Ready</h3>
-            <p class="delivery-text" id="zip-info-text">
-              Files have been safely stored and bundled without re-compression overhead.
-            </p>
             <div class="delivery-actions">
-              <a id="btn-download-zip" class="btn btn-success btn-lg" href="#" download>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <a id="btn-download-zip" class="btn btn-success btn-sm" href="#" download>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
                   <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                   <polyline points="7 10 12 15 17 10"></polyline>
                   <line x1="12" y1="15" x2="12" y2="3"></line>
                 </svg>
-                <span id="btn-zip-label">Download ZIP (0 MB)</span>
+                <span id="btn-zip-label">Download ZIP</span>
               </a>
-              <button id="btn-open-folder" class="btn btn-outline">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
-                </svg>
-                Open Folder in Explorer
+              <button id="btn-open-folder" class="btn btn-secondary btn-sm">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+                Open Folder
               </button>
-              <button id="btn-start-new" class="btn btn-ghost">
-                Start New Playlist
-              </button>
+            </div>
+          </div>
+
+          <!-- Dedicated Y-Scroll Live Progress Queue -->
+          <div class="live-queue-scroll-area">
+            <div id="live-tracks-list" class="live-queue-list">
+              <!-- Dynamically populated live items -->
             </div>
           </div>
         </div>
 
-        <!-- Per-Track Progress List -->
-        <div class="live-tracks-container">
-          <h4 class="tracks-section-title">Track Status</h4>
-          <div id="live-tracks-list" class="live-tracks-list">
-            <!-- Dynamically populated track rows -->
-          </div>
-        </div>
       </section>
 
     </main>
 
-    <!-- App Footer -->
-    <footer class="footer">
-      <div class="footer-content">
-        <p class="disclaimer">
-          ⚠️ <strong>Disclaimer:</strong> Music Playlist Downloader is strictly for personal offline archiving of content you have the legal right or permission to download. Respect copyright and creator rights.
-        </p>
-        <div class="footer-links">
-          <span>Local Windows Host: <code>127.0.0.1:8000</code></span>
-        </div>
-      </div>
-    </footer>
   </div>
 
   <!-- Notification Toast Container -->
-  <div id="toast-container" class="toast-container"></div>
+  <div id="toast-container" class="toast-shelf"></div>
 
   <script src="/static/app.js"></script>
 </body>

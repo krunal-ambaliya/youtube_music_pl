@@ -348,11 +348,19 @@ def run_single_download(job: DownloadJob, item: TrackItem):
         elif pp_status == "finished":
             job.update_track(item.id, status="converting", speed="", eta="finalizing")
 
-    # Determine outtmpl
-    idx_str = f"{item.index:02d}" if opts.prefix_index else ""
+    # Determine outtmpl and eliminate NA by resolving playlist_index explicitly
     template = opts.filename_template.strip()
     if not template:
         template = "%(playlist_index)02d - %(title)s.%(ext)s" if opts.prefix_index else "%(title)s.%(ext)s"
+
+    idx_str = f"{item.index:02d}"
+    if opts.prefix_index:
+        if "%(playlist_index)" in template:
+            template = re.sub(r'%\(playlist_index\)(?:0?\d*d|s)?', idx_str, template)
+        else:
+            template = f"{idx_str} - {template}"
+    else:
+        template = re.sub(r'%\(playlist_index\)(?:0?\d*d|s)?\s*[-_]?\s*', '', template)
 
     outtmpl = str(job.download_dir / template)
 
