@@ -900,9 +900,14 @@ function runDemoDownloadSimulation(selectedTracks) {
     }, (i + 1) * 600);
 
     setTimeout(() => {
-      updateLiveQueueRow({ id: track.id, status: "converting", percent: 90, eta: "Encoding" });
+      updateLiveQueueRow({ id: track.id, status: "conversion_queued", eta: "Convert-Q" });
+      updatePreviewRowStatus(track.id, "conversion_queued");
+    }, (i + 1) * 1000);
+
+    setTimeout(() => {
+      updateLiveQueueRow({ id: track.id, status: "converting", percent: 90, eta: "Converting" });
       updatePreviewRowStatus(track.id, "converting", 90);
-    }, (i + 1) * 1100);
+    }, (i + 1) * 1350);
 
     setTimeout(() => {
       finished++;
@@ -923,7 +928,7 @@ function runDemoDownloadSimulation(selectedTracks) {
           });
         }, 400);
       }
-    }, (i + 1) * 1600);
+    }, (i + 1) * 1750);
   });
 }
 
@@ -982,15 +987,43 @@ function handleSSEMessage(data) {
   } else if (data.type === "overall_update") {
     updateOverallProgress(data);
   } else if (data.type === "cancelled") {
-    el.progressHeading.textContent = "Download Cancelled";
-    el.progressSubtext.textContent = "Active downloads halted.";
+    const saved = data.completed_count || 0;
+    const total = data.total_count || (state.selectedIds ? state.selectedIds.size : 0);
+
+    if (saved > 0) {
+      const mb = data.zip_size_bytes ? (data.zip_size_bytes / (1024 * 1024)).toFixed(1) : "0.0";
+      const zipUrl = `/api/download/zip/${data.job_id || state.activeJobId}`;
+      el.progressHeading.textContent = "Download Cancelled (Preserved)";
+      el.progressSubtext.textContent = `Process cancelled immediately. Preserved ${saved} of ${total} finished tracks in ZIP.`;
+      
+      // Activate ZIP Download buttons for preserved files
+      el.topZipLabel.textContent = `Download ZIP (${mb} MB)`;
+      el.topZipBtn.href = zipUrl;
+      el.topZipBtn.classList.remove("hidden");
+
+      el.btnZipLabel.textContent = `Download Preserved (${saved} Tracks - ${mb} MB)`;
+      el.btnDownloadZip.href = zipUrl;
+      if (el.completedActionsRow) el.completedActionsRow.classList.remove("hidden");
+      el.btnStartDownload.classList.add("hidden");
+
+      if (el.tableFooterStatusText) {
+        el.tableFooterStatusText.innerHTML = `<strong style="color:#fbbf24">${saved} of ${total} Preserved (Cancelled)</strong>`;
+      }
+      showToast(`Cancelled: Preserved ${saved} completed track(s) in ZIP.`, "info");
+    } else {
+      el.progressHeading.textContent = "Download Cancelled";
+      el.progressSubtext.textContent = "Process stopped immediately right where it was. No tracks were completed.";
+      el.btnStartDownload.disabled = false;
+      el.btnStartDownload.classList.remove("is-busy");
+      el.btnStartDownload.classList.remove("hidden");
+      if (el.btnDownloadLabel) el.btnDownloadLabel.textContent = `Download Selected Tracks (${state.selectedIds.size} Tracks)`;
+      showToast("Download cancelled.", "info");
+    }
+
     el.btnCancelJob.disabled = true;
     el.btnCancelJob.classList.add("hidden");
-    el.btnStartDownload.disabled = false;
-    el.btnStartDownload.classList.remove("is-busy");
     document.querySelectorAll(".track-chk, #master-checkbox").forEach(c => c.disabled = false);
-    if (el.queueStatusText) el.queueStatusText.textContent = "Queue cancelled";
-    showToast("Download cancelled.", "info");
+    if (el.queueStatusText) el.queueStatusText.textContent = `Queue cancelled (${saved} saved)`;
     if (state.eventSource) state.eventSource.close();
   } else if (data.type === "completed") {
     handleJobCompleted(data);
@@ -1003,10 +1036,14 @@ function updatePreviewRowStatus(trackId, status, percent, error) {
   if (!cell) return;
   if (status === "downloading") {
     cell.innerHTML = `<span class="badge-status badge-downloading">${percent || 0}%</span>`;
+  } else if (status === "conversion_queued") {
+    cell.innerHTML = `<span class="badge-status badge-convert-q">Convert-Q</span>`;
   } else if (status === "converting") {
     cell.innerHTML = `<span class="badge-status badge-converting">Converting</span>`;
   } else if (status === "done") {
     cell.innerHTML = `<span class="badge-status badge-done">Done ✓</span>`;
+  } else if (status === "cancelled") {
+    cell.innerHTML = `<span class="badge-status badge-skipped">Cancelled</span>`;
   } else if (status === "failed") {
     cell.innerHTML = `<span class="badge-status badge-failed" title="${escapeHtml(error || 'Failed')}">Failed ✕</span>`;
   } else if (status === "queued") {
@@ -1028,11 +1065,17 @@ function updateLiveQueueRow(t) {
   if (t.status === "downloading") {
     pill.textContent = `${t.percent}%`;
     if (speed) speed.textContent = t.speed || "";
+  } else if (t.status === "conversion_queued") {
+    pill.textContent = "Convert-Q";
+    if (speed) speed.textContent = "Queued";
   } else if (t.status === "converting") {
     pill.textContent = t.eta || "Converting";
     if (speed) speed.textContent = "ffmpeg";
   } else if (t.status === "done") {
     pill.textContent = "Done ✓";
+    if (speed) speed.textContent = "";
+  } else if (t.status === "cancelled") {
+    pill.textContent = "Cancelled";
     if (speed) speed.textContent = "";
   } else if (t.status === "failed") {
     pill.textContent = "Failed ✕";
@@ -1040,6 +1083,9 @@ function updateLiveQueueRow(t) {
     if (speed) speed.textContent = t.error ? t.error.slice(0, 14) : "";
   } else if (t.status === "skipped") {
     pill.textContent = "Skipped";
+    if (speed) speed.textContent = "";
+  } else if (t.status === "queued") {
+    pill.textContent = "Queued";
     if (speed) speed.textContent = "";
   }
 }
