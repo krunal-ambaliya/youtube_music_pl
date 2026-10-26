@@ -3,11 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Music Playlist Downloader</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎵</text></svg>">
+  <title>TuneVault PRO - Music Playlist Downloader</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23ff2e55'><path d='M9 18V5l12-2v13M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0zm12-2a3 3 0 1 1-6 0 3 3 0 0 1 6 0z'/></svg>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body class="app-body">
@@ -18,50 +18,33 @@
       <div class="nav-left">
         <div class="brand">
           <div class="brand-logo">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M9 18V5l12-2v13"></path>
-              <circle cx="6" cy="18" r="3"></circle>
-              <circle cx="18" cy="16" r="3"></circle>
+            <svg viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
             </svg>
           </div>
           <div class="brand-info">
-            <span class="brand-name">Music Playlist Downloader</span>
-            <div class="brand-tags">
-              <span id="ffmpeg-pill" class="sys-badge sys-neutral" title="FFmpeg status">FFmpeg</span>
-              <span id="deno-pill" class="sys-badge sys-neutral" title="Deno runtime">Deno</span>
-              <span id="ytdlp-version-label" class="sys-badge sys-muted">yt-dlp</span>
-            </div>
+            <span class="brand-name">TuneVault</span>
+            <span class="brand-badge-pro">PRO</span>
           </div>
         </div>
-      </div>
 
-      <!-- Center Search & URL Input Bar -->
-      <div class="nav-center">
-        <div class="search-box">
-          <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
-            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
-          </svg>
-          <input 
-            type="text" 
-            id="url-input" 
-            placeholder="Paste YouTube Music or YouTube playlist link here..."
-            autocomplete="off"
-            spellcheck="false"
-          >
-          <span id="platform-badge" class="platform-tag hidden">YouTube Music</span>
-          <button id="btn-clear-url" class="btn-icon-ghost hidden" title="Clear input">✕</button>
-          <button id="btn-fetch" class="btn btn-primary btn-sm">
-            <span class="btn-text">Fetch</span>
-            <span class="btn-spinner hidden"></span>
-          </button>
+        <div class="brand-tags">
+          <span id="ffmpeg-pill" class="sys-badge sys-ok" title="FFmpeg status">
+            <span class="badge-dot"></span><span class="badge-text">FFmpeg 6.1</span>
+          </span>
+          <span id="ytdlp-version-label" class="sys-badge sys-ok" title="yt-dlp version">
+            <span class="badge-dot"></span><span class="badge-text">yt-dlp v2026.10</span>
+          </span>
+          <span id="deno-pill" class="sys-badge sys-ok" title="Deno Native Core">
+            <span class="badge-dot"></span><span class="badge-text">Deno Native Core</span>
+          </span>
         </div>
       </div>
 
-      <!-- Right Navigation Actions & Top ZIP Button -->
+      <!-- Right Header Actions -->
       <div class="nav-right">
-        <!-- Prominent Top ZIP Download Button -->
-        <a id="top-zip-btn" class="btn btn-success btn-sm top-zip hidden" href="#" download>
+        <!-- Top ZIP Download Button (Shown when ready) -->
+        <a id="top-zip-btn" class="nav-zip-pill hidden" href="#" download>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
             <polyline points="7 10 12 15 17 10"></polyline>
@@ -70,17 +53,26 @@
           <span id="top-zip-label">Download ZIP</span>
         </a>
 
-        <button id="btn-start-new" class="btn btn-ghost btn-sm" title="Reset and load new playlist">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-          New
-        </button>
-
-        <button id="btn-update-ytdlp" class="btn btn-ghost btn-sm" title="Check & update yt-dlp">
+        <button id="btn-update-ytdlp" class="btn-nav-action" title="Check & update yt-dlp">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
           </svg>
-          Update
+          <span>Check Updates</span>
         </button>
+
+        <button id="btn-start-new" class="btn-nav-action" title="Reset / Settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+          <span>Settings</span>
+        </button>
+
+        <div class="traffic-lights">
+          <span class="light-dot light-yellow"></span>
+          <span class="light-dot light-green"></span>
+          <span class="light-dot light-cyan"></span>
+        </div>
       </div>
     </header>
 
@@ -95,6 +87,52 @@
         </div>
       </div>
       <button id="btn-recheck-tools" class="btn btn-xs btn-outline">Re-check</button>
+    </div>
+
+    <!-- URL Input Bar Container -->
+    <div class="url-bar-section">
+      <div class="url-bar-container">
+        <div class="url-input-wrap">
+          <svg class="chain-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+          </svg>
+          <input 
+            type="text" 
+            id="url-input" 
+            placeholder="https://music.youtube.com/playlist?list=PLHfHCI5sXPhw..."
+            autocomplete="off"
+            spellcheck="false"
+          >
+          <button id="btn-clear-url" class="btn-clear-ghost hidden" title="Clear input">✕</button>
+        </div>
+
+        <div class="url-actions">
+          <div id="platform-badge" class="platform-chip">
+            <svg class="yt-play-icon" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/>
+            </svg>
+            <span>YT Music</span>
+          </div>
+
+          <button id="btn-paste-url" class="btn-paste" title="Paste from clipboard">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path>
+              <rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect>
+            </svg>
+            <span>Paste</span>
+          </button>
+
+          <button id="btn-fetch" class="btn-fetch-cta">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+              <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/>
+              <path d="M12 13v6m-3-3l3 3 3-3"/>
+            </svg>
+            <span class="btn-text">Fetch Playlist</span>
+            <span class="btn-spinner hidden"></span>
+          </button>
+        </div>
+      </div>
     </div>
 
     <!-- Main 2-Column Split Workspace -->
@@ -115,7 +153,7 @@
           <p>Paste a YouTube Music or YouTube playlist link in the search bar above to preview and download tracks.</p>
           <div class="sample-link-box">
             <span>Sample:</span>
-            <code id="sample-link-click">https://music.youtube.com/playlist?list=PLHfHCISsXPhw</code>
+            <code id="sample-link-click">https://music.youtube.com/playlist?list=PLHfHCI5sXPhw</code>
           </div>
         </div>
 
@@ -127,60 +165,98 @@
             <div class="skeleton-row shimmer"></div>
             <div class="skeleton-row shimmer"></div>
             <div class="skeleton-row shimmer"></div>
-            <div class="skeleton-row shimmer"></div>
           </div>
         </div>
 
         <!-- Loaded Playlist View -->
         <div id="playlist-loaded-wrap" class="loaded-wrap hidden">
           
-          <!-- Playlist Header -->
+          <!-- Playlist Header Card -->
           <div class="playlist-meta-card">
-            <img id="playlist-cover" src="" alt="Cover" class="meta-cover" loading="lazy">
+            <div class="cover-wrapper">
+              <img id="playlist-cover" src="" alt="Cover" class="meta-cover" loading="lazy">
+              <div class="cover-eq-badge">EQ</div>
+            </div>
+
             <div class="meta-info">
-              <div class="meta-title-row">
-                <h2 id="playlist-title" class="meta-title">Playlist Title</h2>
-                <span id="playlist-platform-pill" class="pill-badge">YouTube Music</span>
+              <div class="meta-tag-row">
+                <span id="playlist-platform-pill" class="pill-badge-red">
+                  <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
+                  YOUTUBE MUSIC
+                </span>
+                <span class="meta-updated-label">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                  Updated Yesterday
+                </span>
               </div>
-              <div class="meta-sub">
-                <span id="playlist-uploader" class="sub-author">Artist</span>
-                <span class="sub-dot">•</span>
-                <span id="playlist-count" class="sub-count">0 tracks</span>
-                <span class="sub-dot">•</span>
-                <span id="playlist-duration" class="sub-duration">0:00</span>
+
+              <h2 id="playlist-title" class="meta-title">Playlist Title</h2>
+              
+              <div class="meta-author-sub">
+                <span id="playlist-uploader" class="sub-author">Curated by Artist • 0 tracks discovered</span>
+              </div>
+
+              <!-- Stat Boxes Row -->
+              <div class="stat-boxes-row">
+                <div class="stat-pill-box">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>
+                  <div class="stat-text-col">
+                    <strong id="playlist-count">0</strong>
+                    <span>Tracks Total</span>
+                  </div>
+                </div>
+
+                <div class="stat-pill-box">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                  <div class="stat-text-col">
+                    <strong id="playlist-duration">0:00</strong>
+                    <span>Total Time</span>
+                  </div>
+                </div>
+
+                <div class="stat-pill-box">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"></path></svg>
+                  <div class="stat-text-col">
+                    <strong id="selected-size-estimate">~0 MB</strong>
+                    <span>Est. Size</span>
+                  </div>
+                </div>
               </div>
             </div>
-            <div class="selection-counter-badge">
-              <span id="selected-count-label" class="counter-num">0 of 0</span>
-              <span class="counter-sub" id="selected-size-estimate">~0 MB</span>
+
+            <!-- Right-aligned Selected Card -->
+            <div class="selected-summary-card">
+              <span class="sel-card-label">SELECTED</span>
+              <div class="sel-card-count">
+                <strong id="selected-count-label" class="accent-green">0</strong> of <span id="total-count-label">0</span>
+              </div>
+              <span class="sel-card-sub" id="selected-percent-label">0% active</span>
             </div>
           </div>
 
           <!-- Selection Controls Toolbar -->
           <div class="selection-bar">
             <div class="selection-actions">
-              <button id="btn-select-all" class="btn btn-xs btn-toolbar">All</button>
-              <button id="btn-deselect-all" class="btn btn-xs btn-toolbar">None</button>
-              <button id="btn-invert-selection" class="btn btn-xs btn-toolbar">Invert</button>
+              <button id="btn-select-all" class="btn-tb">All</button>
+              <button id="btn-deselect-all" class="btn-tb">None</button>
+              <button id="btn-invert-selection" class="btn-tb">Invert</button>
               
-              <div class="quick-selector">
-                <span>First</span>
-                <input type="number" id="input-first-n" min="1" placeholder="10" class="input-tiny">
-                <button id="btn-apply-first-n" class="btn btn-xs btn-toolbar">Go</button>
+              <div class="range-selector">
+                <span>Range:</span>
+                <input type="number" id="input-range-from" min="1" value="1" class="input-range">
+                <span>to</span>
+                <input type="number" id="input-range-to" min="1" value="4" class="input-range">
+                <button id="btn-apply-range" class="btn-tb btn-apply">Apply</button>
               </div>
 
-              <div class="quick-selector">
-                <span>#</span>
-                <input type="number" id="input-range-from" min="1" placeholder="1" class="input-tiny">
-                <span>–</span>
-                <input type="number" id="input-range-to" min="1" placeholder="20" class="input-tiny">
-                <button id="btn-apply-range" class="btn btn-xs btn-toolbar">Go</button>
-              </div>
+              <!-- Hidden input-first-n for compatibility -->
+              <input type="hidden" id="input-first-n">
+              <button id="btn-apply-first-n" class="hidden"></button>
             </div>
 
             <div class="filter-box">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-              <input type="text" id="track-filter-input" placeholder="Filter tracks...">
+              <input type="text" id="track-filter-input" placeholder="Filter tracks or artists...">
             </div>
           </div>
 
@@ -194,9 +270,9 @@
                   </th>
                   <th class="col-idx">#</th>
                   <th class="col-thumb"></th>
-                  <th class="col-title">Title & Artist</th>
-                  <th class="col-dur">Duration</th>
-                  <th class="col-status">Status</th>
+                  <th class="col-title">TITLE & ARTIST</th>
+                  <th class="col-dur">DURATION</th>
+                  <th class="col-status">STATUS</th>
                 </tr>
               </thead>
               <tbody id="tracklist-tbody">
@@ -205,72 +281,108 @@
             </table>
           </div>
 
+          <!-- Table Bottom Status Bar -->
+          <div class="table-footer-bar">
+            <div class="footer-left-status">
+              <span class="status-pulse-dot"></span>
+              <span>All media links validated &amp; ready for high-speed download</span>
+            </div>
+            <div class="footer-right-counts" id="table-footer-selected">
+              0 / 0 Selected
+            </div>
+          </div>
+
         </div>
       </section>
 
       <!-- ================= RIGHT COLUMN: Options & Live Progress ================= -->
       <section class="panel panel-right">
 
-        <!-- Options Card -->
+        <!-- Download Settings Card -->
         <div class="card-section options-section" id="section-options">
           <div class="section-header">
-            <h3 class="section-title">Download Settings</h3>
+            <div class="header-title-block">
+              <div class="settings-title-row">
+                <svg class="header-icon-red" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                  <line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line>
+                  <line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line>
+                  <line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line>
+                  <line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line><line x1="17" y1="16" x2="23" y2="16"></line>
+                </svg>
+                <h3 class="section-title">Download Settings</h3>
+              </div>
+              <span class="section-subtitle">Configure codecs, audio quality &amp; tags</span>
+            </div>
             
             <!-- Type Toggle -->
             <div class="segmented-control">
-              <button id="opt-type-audio" class="seg-btn active" data-type="audio">Audio Only</button>
-              <button id="opt-type-video" class="seg-btn" data-type="video">Video + Audio</button>
+              <button id="opt-type-audio" class="seg-btn active" data-type="audio">
+                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
+                Audio Only
+              </button>
+              <button id="opt-type-video" class="seg-btn" data-type="video">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"></rect><line x1="7" y1="2" x2="7" y2="22"></line><line x1="17" y1="2" x2="17" y2="22"></line><line x1="2" y1="12" x2="22" y2="12"></line><line x1="2" y1="7" x2="7" y2="7"></line><line x1="2" y1="17" x2="7" y2="17"></line><line x1="17" y1="17" x2="22" y2="17"></line><line x1="17" y1="7" x2="22" y2="7"></line></svg>
+                Video + Audio
+              </button>
             </div>
           </div>
 
-          <!-- Audio Configuration -->
+          <!-- Target Audio Format -->
           <div id="audio-options-panel" class="settings-subpanel">
-            <div class="settings-grid">
-              <div class="setting-item">
-                <label class="setting-label">Audio Format</label>
-                <div class="format-chips" id="audio-format-group">
-                  <button class="chip-btn active" data-val="best">Best original</button>
-                  <button class="chip-btn" data-val="mp3">MP3</button>
-                  <button class="chip-btn" data-val="m4a">M4A</button>
-                  <button class="chip-btn" data-val="opus">OPUS</button>
-                  <button class="chip-btn" data-val="flac">FLAC</button>
-                  <button class="chip-btn" data-val="wav">WAV</button>
-                  <button class="chip-btn" data-val="ogg">OGG</button>
-                </div>
-              </div>
-
-              <div class="setting-item">
-                <label class="setting-label">Audio Quality / Bitrate</label>
-                <select id="select-audio-quality" class="pro-select">
-                  <option value="best" selected>Best available (Default)</option>
-                  <option value="320">320 kbps (CBR High)</option>
-                  <option value="256">256 kbps (High)</option>
-                  <option value="192">192 kbps (Standard)</option>
-                  <option value="128">128 kbps (Compact)</option>
-                </select>
+            <div class="setting-item">
+              <label class="setting-label-upper">TARGET AUDIO FORMAT</label>
+              <div class="format-chips-grid" id="audio-format-group">
+                <button class="chip-box" data-val="best">Original</button>
+                <button class="chip-box active" data-val="mp3">MP3</button>
+                <button class="chip-box" data-val="m4a">M4A / AAC</button>
+                <button class="chip-box" data-val="opus">OPUS</button>
+                <button class="chip-box" data-val="flac">FLAC</button>
+                <button class="chip-box" data-val="wav">WAV</button>
               </div>
             </div>
 
-            <div class="pro-tip">
-              💡 <span>YouTube Music web streams are max ~128–256 kbps. <em>Best original</em> preserves the exact stream without re-encoding overhead.</span>
+            <!-- Audio Quality / Bitrate -->
+            <div class="setting-item mt-10">
+              <div class="label-with-sub">
+                <label class="setting-label-upper">AUDIO QUALITY &amp; BITRATE</label>
+                <span class="sub-label-right">Constant Bitrate (CBR)</span>
+              </div>
+              <div class="custom-select-wrap">
+                <select id="select-audio-quality" class="pro-select-styled">
+                  <option value="320" selected>320 kbps (CBR High — Studio Mastering Quality)</option>
+                  <option value="256">256 kbps (High — AAC / MP3 Optimal)</option>
+                  <option value="192">192 kbps (Standard Quality)</option>
+                  <option value="128">128 kbps (Compact Web Audio)</option>
+                  <option value="best">Best available (Stream Direct)</option>
+                </select>
+                <span class="select-chevron">▾</span>
+              </div>
+            </div>
+
+            <!-- Pro Tip Box -->
+            <div class="pro-tip-box">
+              <div class="pro-tip-icon">💡</div>
+              <div class="pro-tip-text">
+                <strong>Pro Tip:</strong> YouTube Music web streams top out at ~128–256 kbps. Selecting <em>Best Original</em> preserves audio precision without lossy re-encoding latency.
+              </div>
             </div>
           </div>
 
-          <!-- Video Configuration -->
+          <!-- Video Configuration (Toggled if Video + Audio selected) -->
           <div id="video-options-panel" class="settings-subpanel hidden">
-            <div class="settings-grid">
-              <div class="setting-item">
-                <label class="setting-label">Video Format</label>
-                <div class="format-chips" id="video-format-group">
-                  <button class="chip-btn active" data-val="mp4">MP4</button>
-                  <button class="chip-btn" data-val="mkv">MKV</button>
-                  <button class="chip-btn" data-val="webm">WEBM</button>
-                </div>
+            <div class="setting-item">
+              <label class="setting-label-upper">TARGET VIDEO FORMAT</label>
+              <div class="format-chips-grid" id="video-format-group">
+                <button class="chip-box active" data-val="mp4">MP4</button>
+                <button class="chip-box" data-val="mkv">MKV</button>
+                <button class="chip-box" data-val="webm">WEBM</button>
               </div>
+            </div>
 
-              <div class="setting-item">
-                <label class="setting-label">Max Resolution</label>
-                <select id="select-video-quality" class="pro-select">
+            <div class="setting-item mt-10">
+              <label class="setting-label-upper">MAX VIDEO RESOLUTION</label>
+              <div class="custom-select-wrap">
+                <select id="select-video-quality" class="pro-select-styled">
                   <option value="best" selected>Best available</option>
                   <option value="2160">2160p (4K UHD)</option>
                   <option value="1440">1440p (2K QHD)</option>
@@ -278,55 +390,85 @@
                   <option value="720">720p (HD)</option>
                   <option value="480">480p</option>
                 </select>
+                <span class="select-chevron">▾</span>
               </div>
             </div>
           </div>
 
-          <!-- Toggles Switchboard -->
-          <div class="switches-grid">
-            <label class="switch-row">
-              <input type="checkbox" id="toggle-metadata" checked>
-              <span class="switch-slider"></span>
-              <span class="switch-label">Embed ID3 Metadata & Tags</span>
-            </label>
-
-            <label class="switch-row">
-              <input type="checkbox" id="toggle-cover" checked>
-              <span class="switch-slider"></span>
-              <span class="switch-label">Embed Cover Artwork</span>
-            </label>
-
-            <label class="switch-row">
-              <input type="checkbox" id="toggle-prefix-index" checked>
-              <span class="switch-slider"></span>
-              <span class="switch-label">Prefix Track Index (01, 02...)</span>
-            </label>
-
-            <label class="switch-row">
-              <input type="checkbox" id="toggle-skip-existing" checked>
-              <span class="switch-slider"></span>
-              <span class="switch-label">Skip Existing Files</span>
-            </label>
-
-            <label class="switch-row">
-              <input type="checkbox" id="toggle-save-thumbs">
-              <span class="switch-slider"></span>
-              <span class="switch-label">Save Standalone .jpg Image</span>
-            </label>
-
-            <label class="switch-row" id="control-embed-subs">
-              <input type="checkbox" id="toggle-subtitles">
-              <span class="switch-slider"></span>
-              <span class="switch-label">Embed Subtitles (Video)</span>
-            </label>
-          </div>
-
-          <!-- Collapsible Advanced Settings -->
-          <details class="pro-accordion">
+          <!-- USER SPECIFIC REQUIREMENT: Metadata and file structure in DROPDOWN to optimize size -->
+          <details class="pro-accordion" id="metadata-dropdown-accordion">
             <summary class="pro-accordion-summary">
-              <span>Advanced Configuration</span>
-              <span class="accordion-arrow">▾</span>
+              <div class="accordion-summary-left">
+                <svg class="acc-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                  <polyline points="14 2 14 8 20 8"></polyline>
+                  <line x1="16" y1="13" x2="8" y2="13"></line>
+                  <line x1="16" y1="17" x2="8" y2="17"></line>
+                  <polyline points="10 9 9 9 8 9"></polyline>
+                </svg>
+                <span class="accordion-header-title">METADATA &amp; FILE STRUCTURE</span>
+              </div>
+              <div class="accordion-summary-right">
+                <span class="acc-badge">5 Options</span>
+                <span class="accordion-arrow">▾</span>
+              </div>
             </summary>
+            
+            <div class="accordion-body">
+              <div class="switches-grid">
+                <label class="switch-row">
+                  <input type="checkbox" id="toggle-metadata" checked>
+                  <span class="checkbox-visual"></span>
+                  <span class="switch-label">Embed ID3 Tags &amp; Lyrics</span>
+                </label>
+
+                <label class="switch-row">
+                  <input type="checkbox" id="toggle-cover" checked>
+                  <span class="checkbox-visual"></span>
+                  <span class="switch-label">Embed HD Album Artwork</span>
+                </label>
+
+                <label class="switch-row">
+                  <input type="checkbox" id="toggle-prefix-index" checked>
+                  <span class="checkbox-visual"></span>
+                  <span class="switch-label">Prefix Track Numbers (01, 02..)</span>
+                </label>
+
+                <label class="switch-row">
+                  <input type="checkbox" id="toggle-skip-existing" checked>
+                  <span class="checkbox-visual"></span>
+                  <span class="switch-label">Skip Existing Files</span>
+                </label>
+
+                <label class="switch-row">
+                  <input type="checkbox" id="toggle-save-thumbs">
+                  <span class="checkbox-visual"></span>
+                  <span class="switch-label">Save Standalone Cover (.jpg) in Folder</span>
+                </label>
+
+                <label class="switch-row hidden" id="control-embed-subs">
+                  <input type="checkbox" id="toggle-subtitles">
+                  <span class="checkbox-visual"></span>
+                  <span class="switch-label">Embed Subtitles (Video)</span>
+                </label>
+              </div>
+            </div>
+          </details>
+
+          <!-- Collapsible Advanced Configuration & Output Directory -->
+          <details class="pro-accordion" id="advanced-dropdown-accordion">
+            <summary class="pro-accordion-summary">
+              <div class="accordion-summary-left">
+                <svg class="acc-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="9 18 15 12 9 6"></polyline>
+                </svg>
+                <span class="accordion-header-title">Advanced Configuration &amp; Output Directory</span>
+              </div>
+              <div class="accordion-summary-right">
+                <span class="accordion-arrow">▾</span>
+              </div>
+            </summary>
+            
             <div class="accordion-body">
               <div class="accordion-grid">
                 <div class="setting-item">
@@ -335,7 +477,7 @@
                 </div>
                 <div class="setting-item">
                   <label class="setting-label">Cookies from Browser</label>
-                  <select id="select-cookies-browser" class="pro-select">
+                  <select id="select-cookies-browser" class="pro-select-styled">
                     <option value="" selected>None (Public extraction)</option>
                     <option value="chrome">Google Chrome</option>
                     <option value="edge">Microsoft Edge</option>
@@ -353,52 +495,72 @@
               </div>
             </div>
           </details>
-
-          <!-- Primary Download Action Button -->
-          <div class="download-cta-row">
-            <button id="btn-start-download" class="btn btn-primary btn-block" disabled>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                <polyline points="7 10 12 15 17 10"></polyline>
-                <line x1="12" y1="15" x2="12" y2="3"></line>
-              </svg>
-              <span id="btn-download-label">Download Selected (0 Tracks)</span>
-            </button>
-          </div>
         </div>
 
-        <!-- Live Download Progress & Queue Card -->
-        <div class="card-section progress-section hidden" id="section-progress">
-          <div class="section-header">
-            <div>
-              <h3 class="section-title" id="progress-heading">Downloading Queue...</h3>
-              <span class="section-sub" id="progress-subtext">Initializing threads...</span>
+        <!-- Bottom Batch Download Package & Queue Card -->
+        <div class="card-section package-queue-section">
+          <!-- Status Row -->
+          <div class="queue-status-header">
+            <div class="status-left">
+              <span class="status-indicator-dot"></span>
+              <span id="queue-status-text">Ready to initiate queue</span>
             </div>
-            <div class="progress-ctrls">
-              <button id="btn-cancel-job" class="btn btn-xs btn-danger">Cancel</button>
-              <button id="btn-retry-failed" class="btn btn-xs btn-warning hidden">Retry Failed</button>
+            <div class="status-right" id="queue-specs-pill">
+              0 items • 320k CBR
             </div>
           </div>
 
-          <!-- Overall Progress Bar -->
-          <div class="overall-progress-bar">
+          <!-- Batch Download Package Box -->
+          <div class="batch-package-box">
+            <div class="pkg-left">
+              <div class="pkg-icon-wrap">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+                  <polyline points="2 17 12 22 22 17"></polyline>
+                  <polyline points="2 12 12 17 22 12"></polyline>
+                </svg>
+              </div>
+              <div class="pkg-text">
+                <h4 class="pkg-title">Batch Download Package</h4>
+                <p class="pkg-subtitle">High-speed multi-threaded retrieval</p>
+              </div>
+            </div>
+            <div class="pkg-right">
+              <strong id="batch-est-size" class="pkg-size">~0 MB</strong>
+              <span id="batch-eta" class="pkg-eta">ETA: ~0s @ 85 Mbps</span>
+            </div>
+          </div>
+
+          <!-- Overall Progress Section -->
+          <div class="queue-progress-block">
+            <div class="progress-labels-row">
+              <span class="progress-title-label">Overall Queue Progress</span>
+              <span id="overall-percent-label" class="progress-percent-label">0%</span>
+            </div>
             <div class="progress-track">
               <div id="overall-bar-fill" class="progress-fill" style="width: 0%"></div>
             </div>
-            <div class="progress-stats">
-              <span id="overall-percent-label">0%</span>
-              <span id="overall-counts-label">0 of 0 finished</span>
-            </div>
           </div>
 
-          <!-- Finished Delivery Action Banner (Appears on completion) -->
-          <div id="zip-delivery-card" class="delivery-banner hidden">
-            <div class="delivery-header">
-              <div class="delivery-badge-success">✓ Complete</div>
-              <h4 class="delivery-name">All tracks packaged into ZIP</h4>
-            </div>
-            <div class="delivery-actions">
-              <a id="btn-download-zip" class="btn btn-success btn-sm" href="#" download>
+          <!-- Action Buttons Area: Download CTA or Completed Delivery Actions -->
+          <div class="main-cta-wrapper">
+            <button id="btn-start-download" class="btn-download-main" disabled>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4">
+                <circle cx="12" cy="12" r="10"></circle>
+                <polyline points="8 12 12 16 16 12"></polyline>
+                <line x1="12" y1="8" x2="12" y2="16"></line>
+              </svg>
+              <span id="btn-download-label">Download Selected Tracks (0 Tracks)</span>
+            </button>
+
+            <!-- Sleek Cancel Button (Only visible while actively downloading) -->
+            <button id="btn-cancel-job" class="btn-cancel-pill hidden">
+              ✕ Cancel Active Download
+            </button>
+
+            <!-- Sleek Delivery Actions (Appears on completion: 4 of 4 finished) -->
+            <div id="completed-actions-row" class="completed-actions-row hidden">
+              <a id="btn-download-zip" class="btn-zip-action" href="#" download>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
                   <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                   <polyline points="7 10 12 15 17 10"></polyline>
@@ -406,11 +568,34 @@
                 </svg>
                 <span id="btn-zip-label">Download ZIP</span>
               </a>
-              <button id="btn-open-folder" class="btn btn-secondary btn-sm">
+              <button id="btn-open-folder" class="btn-folder-action" title="Open Download Folder">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
-                Open Folder
+                <span>Open Folder</span>
               </button>
             </div>
+          </div>
+
+          <!-- Card Footer Info -->
+          <div class="queue-card-footer">
+            <span class="footer-license-note">TuneVault uses localized yt-dlp &amp; FFmpeg under MIT / GPL licenses</span>
+            <a href="#" id="link-queue-history" class="footer-history-link">Queue History</a>
+          </div>
+        </div>
+
+        <!-- Live Download Progress & Queue Card (Appears during download) -->
+        <div class="card-section progress-section hidden" id="section-progress">
+          <div class="section-header">
+            <div>
+              <h3 class="section-title" id="progress-heading">Downloading Queue...</h3>
+              <span class="section-sub" id="progress-subtext">Initializing threads...</span>
+            </div>
+            <div class="progress-ctrls">
+              <button id="btn-retry-failed" class="btn btn-xs btn-warning hidden">Retry Failed</button>
+            </div>
+          </div>
+
+          <div class="progress-counts-row">
+            <span id="overall-counts-label">0 of 0 finished</span>
           </div>
 
           <!-- Dedicated Y-Scroll Live Progress Queue -->

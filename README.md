@@ -93,18 +93,114 @@ https://music.youtube.com/playlist?list=PLHfHCISsXPhw&si=tNMyWLmu1DjHBPuH
 
 ```
 youtube_music_pl/
-├── app.py              # FastAPI server, yt-dlp job manager, SSE streamer, WinGet discovery
-├── requirements.txt    # Python package dependencies
-├── README.md           # Documentation & Windows setup guide
-├── .gitignore          # Git exclusion rules (venv, downloads, temp, zips)
-└── static/
-    ├── index.html      # Responsive single-page UI (no build step needed)
-    ├── style.css       # Premium dark glassmorphism stylesheet
-    └── app.js          # Interactive frontend controller & SSE progress handler
+├── app.py              # FastAPI server, yt-dlp job manager, SSE streamer
+├── requirements.txt    # Python package dependencies (cross-platform)
+├── deploy_gcp.sh       # One-command automated GCP / Linux VM installer & service runner
+├── start.sh            # Fast startup script for Linux / Cloud VMs
+├── Dockerfile          # Container build for GCP Cloud Run, Docker Compose, VPS
+├── docker-compose.yml  # Local / Server Docker container orchestration
+├── vercel.json         # Vercel deployment routing configuration
+├── api/
+│   └── index.py        # Vercel Serverless Function entry point
+├── static/
+│   ├── index.html      # Responsive single-page UI (dark glassmorphic theme)
+│   ├── style.css       # Clean stylesheet with responsive layout
+│   └── app.js          # Interactive frontend controller & SSE progress handler
+└── downloads/          # Downloaded tracks & generated ZIP archives
 ```
+
+---
+
+## ☁️ Cross-Platform Deployment Guide
+
+### 1. Google Cloud Platform (GCP Compute Engine / Linux VM)
+
+We provide a zero-effort automated bash installer (`deploy_gcp.sh`) that installs Python, FFmpeg, Deno, creates the virtualenv, installs `requirements.txt`, and sets up an auto-restarting background `systemd` service:
+
+1. SSH into your GCP VM instance.
+2. Clone or upload this repository to the VM:
+   ```bash
+   git clone <repo-url>
+   cd youtube_music_pl
+   ```
+3. Make the script executable and run:
+   ```bash
+   chmod +x deploy_gcp.sh
+   ./deploy_gcp.sh
+   ```
+4. **GCP Firewall Rule**: Open port 8000 in GCP Console or via Cloud Shell:
+   ```bash
+   gcloud compute firewall-rules create allow-tunevault --allow tcp:8000 --target-tags=tunevault-server
+   ```
+5. Open `http://<YOUR_VM_EXTERNAL_IP>:8000` in your browser.
+
+*To start or restart manually anytime on Linux/GCP without re-running the installer:*
+```bash
+chmod +x start.sh
+./start.sh
+```
+
+---
+
+### 2. Google Cloud Run (Serverless Container)
+
+Deploy to Google Cloud Run with autoscaling and zero server maintenance:
+
+```bash
+# Set your GCP Project ID
+gcloud config set project YOUR_PROJECT_ID
+
+# Deploy directly from source using the included Dockerfile
+gcloud run deploy tunevault \
+  --source . \
+  --platform managed \
+  --region us-central1 \
+  --allow-unauthenticated \
+  --memory 1Gi \
+  --timeout 300
+```
+
+---
+
+### 3. Docker & Docker Compose (Any Cloud / Local)
+
+Run anywhere Docker is installed:
+
+```bash
+# Build and start in the background
+docker compose up -d
+
+# View logs
+docker compose logs -f
+
+# Access in browser
+http://localhost:8000
+```
+
+---
+
+### 4. Vercel Deployment
+
+TuneVault includes `vercel.json` and `api/index.py` for deployment to Vercel:
+
+1. Install the Vercel CLI:
+   ```bash
+   npm i -g vercel
+   ```
+2. Deploy:
+   ```bash
+   vercel
+   ```
+3. For production:
+   ```bash
+   vercel --prod
+   ```
+
+> **Note on Vercel Serverless Limits:** Vercel functions run in an ephemeral serverless environment with a `/tmp` folder and function execution limits (10s on Hobby, 60s on Pro). While preview metadata extraction works seamlessly on Vercel, downloading large multi-track playlists is ideally suited for **GCP Compute Engine**, **Google Cloud Run**, or **Docker** where FFmpeg can process long conversions without execution timeouts.
 
 ---
 
 ## ⚖️ Legal Disclaimer
 
 Music Playlist Downloader is strictly intended for personal, offline archiving of content you own, have created, or have explicit permission to download. Please respect intellectual property rights, creator licenses, and YouTube's Terms of Service.
+

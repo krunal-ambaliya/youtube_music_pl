@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  tunevault:
+    build: .
+    container_name: tunevault
+    restart: unless-stopped
+    ports:
+      - "8000:8080"
+    environment:
+      - PORT=8080
+      - HOST=0.0.0.0
+    volumes:
+      - ./downloads:/app/downloads

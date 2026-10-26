@@ -37,10 +37,17 @@ logger = logging.getLogger("MusicPlaylistDownloader")
 
 # Base directory
 BASE_DIR = Path(__file__).resolve().parent
-DOWNLOADS_DIR = BASE_DIR / "downloads"
+
+# Support serverless read-only filesystems (e.g., Vercel / AWS Lambda use /tmp) or custom DOWNLOADS_DIR
+if os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
+    DOWNLOADS_DIR = Path("/tmp/downloads")
+else:
+    DOWNLOADS_DIR = Path(os.environ.get("DOWNLOADS_DIR", BASE_DIR / "downloads"))
+
 DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
 STATIC_DIR = BASE_DIR / "static"
 STATIC_DIR.mkdir(parents=True, exist_ok=True)
+
 
 
 # ---------------------------------------------------------
@@ -69,17 +76,40 @@ def discover_and_inject_binaries():
 
 discover_and_inject_binaries()
 
+def cleanup_legacy_na_files():
+    """Scans DOWNLOADS_DIR and deletes all obsolete 'NA - *' files to reclaim disk space."""
+    try:
+        count = 0
+        freed_bytes = 0
+        for p in DOWNLOADS_DIR.rglob("*"):
+            if p.is_file() and p.name.startswith(("NA - ", "NA_", "NA.")):
+                try:
+                    sz = p.stat().st_size
+                    p.unlink(missing_ok=True)
+                    count += 1
+                    freed_bytes += sz
+                except Exception:
+                    pass
+        if count > 0:
+            mb = freed_bytes / (1024 * 1024)
+            logger.info(f"Cleaned up {count} obsolete NA file(s), freed {mb:.1f} MB disk space.")
+    except Exception as e:
+        logger.warning(f"Error during legacy NA files cleanup: {e}")
+
+cleanup_legacy_na_files()
+
 def check_system_tools() -> Dict[str, Any]:
     ffmpeg_path = shutil.which("ffmpeg")
     deno_path = shutil.which("deno")
+    is_win = sys.platform == "win32"
     return {
         "ffmpeg_installed": bool(ffmpeg_path),
         "ffmpeg_path": ffmpeg_path,
         "deno_installed": bool(deno_path),
         "deno_path": deno_path,
         "ytdlp_version": yt_dlp.version.__version__,
-        "winget_ffmpeg_cmd": "winget install Gyan.FFmpeg",
-        "winget_deno_cmd": "winget install DenoLand.Deno",
+        "winget_ffmpeg_cmd": "winget install Gyan.FFmpeg" if is_win else "sudo apt update && sudo apt install -y ffmpeg",
+        "winget_deno_cmd": "winget install DenoLand.Deno" if is_win else "curl -fsSL https://deno.land/install.sh | sh",
     }
 
 
@@ -197,6 +227,9 @@ class DownloadJob:
         self.zip_path: Optional[Path] = None
         self.zip_size_bytes = 0
         
+        # Auto-clean legacy temp and NA files to optimize resources and disk storage
+        self.cleanup_temp_files()
+        
         # Track statuses: key is item.id
         self.track_status = {}
         for item in items:
@@ -263,7 +296,7 @@ class DownloadJob:
         self.cleanup_temp_files()
 
     def cleanup_temp_files(self):
-        """Remove partial download files (.part, .ytdl, etc.)"""
+        """Remove partial download files (.part, .ytdl, etc.) and purge any obsolete NA files to optimize storage."""
         try:
             for ext in ["*.part", "*.ytdl", "*.temp"]:
                 for temp_file in self.download_dir.glob(ext):
@@ -271,21 +304,87 @@ class DownloadJob:
                         temp_file.unlink(missing_ok=True)
                     except Exception as e:
                         logger.warning(f"Could not remove temp file {temp_file}: {e}")
+
+            # Clean any obsolete NA files to reclaim disk space and prevent inclusion in archives
+            for pattern in ["NA - *", "NA_*", "NA.*"]:
+                for na_file in self.download_dir.glob(pattern):
+                    try:
+                        logger.info(f"Removing obsolete NA file to reclaim storage: {na_file.name}")
+                        na_file.unlink(missing_ok=True)
+                    except Exception as e:
+                        logger.warning(f"Could not remove NA file {na_file}: {e}")
+
+            # If not saving standalone thumbnails, purge any leftover webp/html files
+            if not self.options.save_thumbnails:
+                for img_pattern in ["*.webp", "*.jpg", "*.jpeg", "*.png", "*.html", "*.htm"]:
+                    for img_file in self.download_dir.glob(img_pattern):
+                        try:
+                            img_file.unlink(missing_ok=True)
+                        except Exception:
+                            pass
         except Exception as e:
             logger.warning(f"Error cleaning up temp files in {self.download_dir}: {e}")
 
     def safe_zip(self) -> Path:
-        """Create ZIP stored archive without re-compressing already compressed media."""
+        """Create ZIP stored archive containing ONLY the media files for the selected tracks in this job."""
         zip_filename = f"{self.clean_title}.zip"
         target_zip = DOWNLOADS_DIR / zip_filename
         
+        # Cleanup temporary, obsolete NA, and non-audio files before archiving
+        self.cleanup_temp_files()
+        
+        AUDIO_EXTENSIONS = {".mp3", ".m4a", ".opus", ".flac", ".wav", ".ogg", ".aac"}
+        VIDEO_EXTENSIONS = {".mp4", ".mkv", ".webm", ".mov"}
+        
+        # Collect strictly the files corresponding to the selected items in this job
+        valid_indices = {f"{itm.index:02d}" for itm in self.items}
+        valid_titles = {sanitize_filename(itm.title).lower() for itm in self.items}
+        
+        files_to_zip: list[Path] = []
+        for file_path in sorted(self.download_dir.iterdir()):
+            if not file_path.is_file():
+                continue
+            name = file_path.name
+            ext = file_path.suffix.lower()
+
+            # Strictly filter by allowed media extension: NO .webp, .html, etc.
+            if self.options.type == "audio":
+                if ext not in AUDIO_EXTENSIONS:
+                    if not (self.options.save_thumbnails and ext in [".jpg", ".png"]):
+                        continue
+            else:
+                if ext not in VIDEO_EXTENSIONS:
+                    if not (self.options.save_thumbnails and ext in [".jpg", ".png"]):
+                        continue
+
+            # Never include temporary, zip, or NA files
+            if name.endswith((".part", ".ytdl", ".temp", ".zip")) or name.startswith(("NA -", "NA_", "NA.")):
+                continue
+            
+            # If prefix_index was used, match track indices e.g. "01 - " or "01."
+            if self.options.prefix_index:
+                prefix = name[:2]
+                if prefix in valid_indices and (len(name) > 2 and name[2] in [" ", "-", "."]):
+                    files_to_zip.append(file_path)
+            else:
+                # If prefix_index was not used, match sanitized track title
+                if any(t in name.lower() for t in valid_titles):
+                    files_to_zip.append(file_path)
+
+        # Fallback: if no files matched strict filters, include valid media files only
+        if not files_to_zip:
+            for file_path in sorted(self.download_dir.iterdir()):
+                ext = file_path.suffix.lower()
+                is_media = ext in AUDIO_EXTENSIONS if self.options.type == "audio" else ext in VIDEO_EXTENSIONS
+                if file_path.is_file() and is_media and not file_path.name.startswith(("NA -", "NA_")):
+                    files_to_zip.append(file_path)
+
         # Retry logic for Windows file lock (WinError 32)
         for attempt in range(5):
             try:
                 with zipfile.ZipFile(target_zip, "w", compression=zipfile.ZIP_STORED) as zf:
-                    for file_path in self.download_dir.iterdir():
-                        if file_path.is_file() and not file_path.name.endswith((".part", ".ytdl", ".temp", ".zip")):
-                            zf.write(file_path, arcname=file_path.name)
+                    for file_path in files_to_zip:
+                        zf.write(file_path, arcname=file_path.name)
                 break
             except (PermissionError, OSError) as e:
                 logger.warning(f"Windows file lock encountered creating ZIP (attempt {attempt+1}/5): {e}")
@@ -295,7 +394,6 @@ class DownloadJob:
         if target_zip.exists():
             self.zip_size_bytes = target_zip.stat().st_size
         return target_zip
-
 
 # Active jobs storage
 jobs: Dict[str, DownloadJob] = {}
@@ -362,6 +460,9 @@ def run_single_download(job: DownloadJob, item: TrackItem):
     else:
         template = re.sub(r'%\(playlist_index\)(?:0?\d*d|s)?\s*[-_]?\s*', '', template)
 
+    # Strip any accidental literal 'NA - ' or 'NA_'
+    template = re.sub(r'^NA\s*[-_.]\s*', '', template)
+
     outtmpl = str(job.download_dir / template)
 
     # Detect ffmpeg directory
@@ -370,6 +471,7 @@ def run_single_download(job: DownloadJob, item: TrackItem):
 
     ydl_opts: Dict[str, Any] = {
         "outtmpl": outtmpl,
+        "outtmpl_na_placeholder": "",  # Never allow yt-dlp to output 'NA'
         "quiet": True,
         "no_warnings": True,
         "nocheckcertificate": True,
@@ -835,7 +937,11 @@ async def open_download_folder(req: OpenFolderRequest):
         elif sys.platform == "darwin":
             subprocess.Popen(["open", str(target_path.resolve())])
         else:
-            subprocess.Popen(["xdg-open", str(target_path.resolve())])
+            # Linux: Check if GUI display server is available
+            if os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"):
+                subprocess.Popen(["xdg-open", str(target_path.resolve())])
+            else:
+                logger.info(f"Headless server environment: target folder exists at {target_path}")
         return {"success": True, "path": str(target_path.resolve())}
     except Exception as e:
         logger.error(f"Failed to open folder {target_path}: {e}")
@@ -852,9 +958,13 @@ if __name__ == "__main__":
     print("="*60)
     status = check_system_tools()
     print(f" * yt-dlp: {status['ytdlp_version']}")
-    print(f" * ffmpeg: {'Found (' + str(status['ffmpeg_path']) + ')' if status['ffmpeg_installed'] else 'NOT FOUND - run: winget install Gyan.FFmpeg'}")
-    print(f" * deno:   {'Found (' + str(status['deno_path']) + ')' if status['deno_installed'] else 'NOT FOUND - run: winget install DenoLand.Deno'}")
-    print(f"\n Server running at: http://localhost:8000 (bind 127.0.0.1)")
+    print(f" * ffmpeg: {'Found (' + str(status['ffmpeg_path']) + ')' if status['ffmpeg_installed'] else 'NOT FOUND'}")
+    print(f" * deno:   {'Found (' + str(status['deno_path']) + ')' if status['deno_installed'] else 'NOT FOUND'}")
+    
+    # In cloud environments (GCP Cloud Run, VMs, Docker), HOST and PORT are provided via env
+    host = os.environ.get("HOST", "0.0.0.0" if (os.environ.get("PORT") or sys.platform != "win32") else "127.0.0.1")
+    port = int(os.environ.get("PORT", 8000))
+    print(f"\n Server running at: http://{host}:{port}")
     print(" Press CTRL+C to quit.\n" + "="*60 + "\n")
     
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    uvicorn.run("app:app", host=host, port=port, reload=False)

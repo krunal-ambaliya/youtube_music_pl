@@ -1,0 +1,13 @@
+.git
+.gitignore
+venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.env
+downloads/*
+!downloads/.gitkeep
+deploy_gcp.sh
+start.sh
+.gemini
