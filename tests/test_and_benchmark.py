@@ -130,8 +130,20 @@ def benchmark_pipeline(format_type: str = "best", track_count: int = 50):
     
     wall_start = time.time()
 
-    # Run the pipeline thread
-    run_job_thread(job)
+    original_run_single_download = app.run_single_download
+    def mock_download(j, itm):
+        time.sleep(0.01)
+        raw = j.download_dir / f"{itm.index:02d} - {itm.title}.webm"
+        if not raw.exists():
+            shutil.copy2(sample_source, raw)
+        return raw, {"title": itm.title, "artist": itm.artist}
+
+    app.run_single_download = mock_download
+    try:
+        # Run the pipeline thread
+        run_job_thread(job)
+    finally:
+        app.run_single_download = original_run_single_download
 
     wall_duration = time.time() - wall_start
     cpu_process_duration = time.process_time() - cpu_start_process_time
