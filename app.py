@@ -9,6 +9,7 @@ import asyncio
 import zipfile
 import logging
 import subprocess
+import threading
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 from concurrent.futures import ThreadPoolExecutor
@@ -320,7 +321,14 @@ class DownloadJob:
         self.failed_count = 0
         self.total_count = len(items)
         self.listeners: List[asyncio.Queue] = []
-        self._executor = ThreadPoolExecutor(max_workers=options.concurrency)
+
+        # Decoupled Pipeline: High-speed network download pool + parallel CPU conversion pool
+        download_workers = max(1, options.concurrency)
+        convert_workers = max(2, min(4, os.cpu_count() or 2))
+        self._download_executor = ThreadPoolExecutor(max_workers=download_workers, thread_name_prefix="Downloader")
+        self._convert_executor = ThreadPoolExecutor(max_workers=convert_workers, thread_name_prefix="Converter")
+        self._convert_futures: List[Any] = []
+        self._lock = threading.Lock()
 
     def add_listener(self, queue: asyncio.Queue):
         self.listeners.append(queue)
@@ -359,6 +367,11 @@ class DownloadJob:
         self.cancelled = True
         self.status = "cancelled"
         logger.info(f"Job {self.job_id} marked as cancelled.")
+        try:
+            self._download_executor.shutdown(wait=False, cancel_futures=True)
+            self._convert_executor.shutdown(wait=False, cancel_futures=True)
+        except Exception:
+            pass
         self.broadcast({
             "type": "cancelled",
             "message": "Download cancelled by user."
@@ -597,71 +610,59 @@ def run_single_download(job: DownloadJob, item: TrackItem):
     if opts.skip_existing:
         ydl_opts["nooverwrites"] = True
 
-    postprocessors = []
-
+    # In pipelined architecture, yt-dlp only performs fast raw stream downloading.
+    # FFmpeg transcoding, metadata tagging, and thumbnail embedding are handed off
+    # to the conversion pool immediately, freeing the download worker for the next track!
     if opts.type == "audio":
-        if opts.audio_format == "best":
-            # No re-encoding
-            ydl_opts["format"] = "bestaudio/best"
-        else:
-            ydl_opts["format"] = "bestaudio/best"
-            pp_audio = {
-                "key": "FFmpegExtractAudio",
-                "preferredcodec": opts.audio_format,
-            }
-            if opts.audio_quality != "best":
-                pp_audio["preferredquality"] = opts.audio_quality
-            postprocessors.append(pp_audio)
-
-        if opts.embed_metadata:
-            postprocessors.append({"key": "FFmpegMetadata", "add_metadata": True})
-
-        if opts.embed_cover_art and opts.audio_format in ["mp3", "m4a", "flac", "opus", "ogg"]:
-            ydl_opts["writethumbnail"] = True
-            postprocessors.append({"key": "EmbedThumbnail", "already_have_thumbnail": False})
-        elif opts.embed_cover_art or opts.save_thumbnails:
-            # Save thumbnail alongside for formats where container does not support embedded tags
-            ydl_opts["writethumbnail"] = True
-
+        ydl_opts["format"] = "bestaudio/best"
     else:
-        # Video
         if opts.video_quality == "best":
             ydl_opts["format"] = "bestvideo+bestaudio/best"
         else:
             ydl_opts["format"] = f"bestvideo[height<={opts.video_quality}]+bestaudio/best[height<={opts.video_quality}]/best"
 
-        ydl_opts["merge_output_format"] = opts.video_format
-
-        if opts.embed_metadata:
-            postprocessors.append({"key": "FFmpegMetadata", "add_metadata": True})
-
-        if opts.embed_subtitles:
-            ydl_opts["writesubtitles"] = True
-            ydl_opts["subtitleslangs"] = ["en", "all", "-live_chat"]
-            postprocessors.append({"key": "FFmpegEmbedSubtitle"})
-
-        if opts.save_thumbnails:
-            ydl_opts["writethumbnail"] = True
-
-    if postprocessors:
-        ydl_opts["postprocessors"] = postprocessors
-
-    # Inject playlist_index into yt-dlp metadata
-    ydl_opts["postprocessor_args"] = []
+    if opts.embed_cover_art or opts.save_thumbnails:
+        ydl_opts["writethumbnail"] = True
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # Pass playlist_index in extra_info so outtmpl resolves %(playlist_index)
             info = ydl.extract_info(video_url, download=True, extra_info={"playlist_index": item.index})
-            job.update_track(item.id, status="done", percent=100.0, speed="", eta="")
-            job.completed_count += 1
-            job.update_overall()
+            
+            # Locate the raw downloaded file on disk
+            raw_path = None
+            if info.get("requested_downloads") and len(info["requested_downloads"]) > 0:
+                raw_path_str = info["requested_downloads"][0].get("filepath")
+                if raw_path_str and os.path.exists(raw_path_str):
+                    raw_path = Path(raw_path_str)
+
+            if not raw_path:
+                prefix = f"{item.index:02d} - "
+                for p in job.download_dir.iterdir():
+                    if p.is_file() and p.name.startswith(prefix) and not p.name.endswith((".part", ".ytdl", ".temp", ".zip")):
+                        raw_path = p
+                        break
+
+            # If raw file downloaded, immediately dispatch to conversion pool so download thread is freed!
+            if raw_path and raw_path.exists():
+                job.update_track(item.id, status="converting", speed="", eta="in conversion queue", percent=100.0)
+                with job._lock:
+                    if not job.cancelled:
+                        fut = job._convert_executor.submit(run_single_conversion, job, item, raw_path, info)
+                        job._convert_futures.append(fut)
+                return
+            else:
+                job.update_track(item.id, status="done", percent=100.0, speed="", eta="")
+                with job._lock:
+                    job.completed_count += 1
+                    job.update_overall()
+                return
 
     except DownloadCancelledException:
         logger.info(f"Track {item.id} cancelled.")
         job.update_track(item.id, status="failed", error="Cancelled by user.")
-        job.failed_count += 1
-        job.update_overall()
+        with job._lock:
+            job.failed_count += 1
+            job.update_overall()
 
     except Exception as e:
         err_msg = str(e)
@@ -680,11 +681,34 @@ def run_single_download(job: DownloadJob, item: TrackItem):
                 }
                 fallback_opts["format"] = "bestaudio/best"
                 with yt_dlp.YoutubeDL(fallback_opts) as fallback_ydl:
-                    fallback_ydl.extract_info(video_url, download=True, extra_info={"playlist_index": item.index})
-                    job.update_track(item.id, status="done", percent=100.0, speed="", eta="")
-                    job.completed_count += 1
-                    job.update_overall()
-                    return
+                    info = fallback_ydl.extract_info(video_url, download=True, extra_info={"playlist_index": item.index})
+                    
+                    raw_path = None
+                    if info.get("requested_downloads") and len(info["requested_downloads"]) > 0:
+                        raw_path_str = info["requested_downloads"][0].get("filepath")
+                        if raw_path_str and os.path.exists(raw_path_str):
+                            raw_path = Path(raw_path_str)
+
+                    if not raw_path:
+                        prefix = f"{item.index:02d} - "
+                        for p in job.download_dir.iterdir():
+                            if p.is_file() and p.name.startswith(prefix) and not p.name.endswith((".part", ".ytdl", ".temp", ".zip")):
+                                raw_path = p
+                                break
+
+                    if raw_path and raw_path.exists():
+                        job.update_track(item.id, status="converting", speed="", eta="in conversion queue", percent=100.0)
+                        with job._lock:
+                            if not job.cancelled:
+                                fut = job._convert_executor.submit(run_single_conversion, job, item, raw_path, info)
+                                job._convert_futures.append(fut)
+                        return
+                    else:
+                        job.update_track(item.id, status="done", percent=100.0, speed="", eta="")
+                        with job._lock:
+                            job.completed_count += 1
+                            job.update_overall()
+                        return
             except Exception as retry_err:
                 err_msg = str(retry_err)
                 logger.warning(f"Fallback retry failed for track {item.id}: {err_msg}")
@@ -704,27 +728,164 @@ def run_single_download(job: DownloadJob, item: TrackItem):
             clean_err = err_msg.split("\n")[0][:80]
 
         job.update_track(item.id, status="failed", error=clean_err)
-        job.failed_count += 1
-        job.update_overall()
+        with job._lock:
+            job.failed_count += 1
+            job.update_overall()
+
+
+def run_single_conversion(job: DownloadJob, item: TrackItem, raw_path: Path, info: Dict[str, Any]):
+    """Background worker executing CPU audio conversion & metadata tagging in parallel."""
+    if job.cancelled:
+        try:
+            raw_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return
+
+    job.update_track(item.id, status="converting", speed="", eta="converting...")
+
+    opts = job.options
+    ffmpeg_exe = shutil.which("ffmpeg")
+    if not ffmpeg_exe:
+        discover_and_inject_binaries()
+        ffmpeg_exe = shutil.which("ffmpeg")
+
+    try:
+        if opts.type == "audio":
+            target_ext = f".{opts.audio_format}" if opts.audio_format != "best" else raw_path.suffix.lower()
+            target_path = raw_path.with_suffix(target_ext)
+
+            # Check if re-encoding is needed
+            if opts.audio_format != "best" and raw_path.suffix.lower() != target_ext:
+                cmd = [ffmpeg_exe, "-y", "-i", str(raw_path), "-vn"]
+
+                fmt = opts.audio_format
+                q = opts.audio_quality
+                if fmt == "mp3":
+                    cmd.extend(["-c:a", "libmp3lame"])
+                    if q != "best":
+                        cmd.extend(["-b:a", f"{q}k"])
+                    else:
+                        cmd.extend(["-q:a", "0"])
+                elif fmt == "m4a":
+                    cmd.extend(["-c:a", "aac"])
+                    if q != "best":
+                        cmd.extend(["-b:a", f"{q}k"])
+                    else:
+                        cmd.extend(["-b:a", "256k"])
+                elif fmt == "opus":
+                    cmd.extend(["-c:a", "libopus"])
+                    if q != "best":
+                        cmd.extend(["-b:a", f"{q}k"])
+                    else:
+                        cmd.extend(["-b:a", "192k"])
+                elif fmt == "flac":
+                    cmd.extend(["-c:a", "flac"])
+                elif fmt == "wav":
+                    cmd.extend(["-c:a", "pcm_s16le"])
+                elif fmt == "ogg":
+                    cmd.extend(["-c:a", "libvorbis"])
+                    if q != "best":
+                        cmd.extend(["-b:a", f"{q}k"])
+                    else:
+                        cmd.extend(["-q:a", "6"])
+
+                # Metadata tags
+                if opts.embed_metadata:
+                    title = item.title or info.get("title") or ""
+                    artist = item.artist or info.get("uploader") or ""
+                    album = job.playlist_title or ""
+                    cmd.extend([
+                        "-metadata", f"title={title}",
+                        "-metadata", f"artist={artist}",
+                        "-metadata", f"album_artist={artist}",
+                        "-metadata", f"album={album}",
+                        "-metadata", f"track={item.index}",
+                    ])
+
+                # Cover art thumbnail
+                thumb_file = None
+                if opts.embed_cover_art and fmt in ["mp3", "m4a", "flac"]:
+                    stem = raw_path.stem
+                    parent = raw_path.parent
+                    for cand_ext in [".jpg", ".jpeg", ".png", ".webp"]:
+                        cand = parent / f"{stem}{cand_ext}"
+                        if cand.exists():
+                            thumb_file = cand
+                            break
+                    if thumb_file:
+                        cmd.extend([
+                            "-i", str(thumb_file),
+                            "-map", "0:a",
+                            "-map", "1:v",
+                            "-c:v", "copy",
+                            "-disposition:v:0", "attached_pic"
+                        ])
+                        if fmt == "mp3":
+                            cmd.extend(["-id3v2_version", "3", "-metadata:s:v", "title=Album cover", "-metadata:s:v", "comment=Cover (front)"])
+
+                cmd.append(str(target_path))
+                subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+
+                # Delete raw intermediate file
+                if target_path.exists() and target_path.stat().st_size > 0:
+                    raw_path.unlink(missing_ok=True)
+                    if thumb_file and not opts.save_thumbnails:
+                        thumb_file.unlink(missing_ok=True)
+            else:
+                target_path = raw_path
+
+        else:
+            # Video mode
+            target_ext = f".{opts.video_format}"
+            target_path = raw_path.with_suffix(target_ext)
+            if raw_path.suffix.lower() != target_ext:
+                cmd = [ffmpeg_exe, "-y", "-i", str(raw_path), "-c", "copy", str(target_path)]
+                subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+                if target_path.exists() and target_path.stat().st_size > 0:
+                    raw_path.unlink(missing_ok=True)
+
+        job.update_track(item.id, status="done", percent=100.0, speed="", eta="")
+        with job._lock:
+            job.completed_count += 1
+            job.update_overall()
+
+    except Exception as e:
+        err_msg = str(e)
+        logger.error(f"Conversion error for track {item.id} ({item.title}): {err_msg}")
+        job.update_track(item.id, status="failed", error="Conversion failed")
+        with job._lock:
+            job.failed_count += 1
+            job.update_overall()
 
 
 def run_job_thread(job: DownloadJob):
-    """Master worker running in background for the entire job."""
-    logger.info(f"Starting job {job.job_id} for playlist '{job.playlist_title}' with {job.total_count} tracks.")
-    futures = []
+    """Pipelined master worker running background downloads and conversions."""
+    logger.info(f"Starting pipelined job {job.job_id} for playlist '{job.playlist_title}' with {job.total_count} tracks.")
+    download_futures = []
     for item in job.items:
         if job.cancelled:
             break
-        futures.append(job._executor.submit(run_single_download, job, item))
+        download_futures.append(job._download_executor.submit(run_single_download, job, item))
 
-    # Wait for all submitted tasks
-    for f in futures:
+    # Wait for all network downloads to finish
+    for f in download_futures:
         try:
             f.result()
         except Exception as e:
-            logger.error(f"Task error: {e}")
+            logger.error(f"Download pipeline task error: {e}")
 
-    job._executor.shutdown(wait=True)
+    job._download_executor.shutdown(wait=True)
+
+    # Wait for all background conversions to complete
+    while True:
+        with job._lock:
+            pending = [f for f in job._convert_futures if not f.done()]
+        if not pending:
+            break
+        time.sleep(0.15)
+
+    job._convert_executor.shutdown(wait=True)
 
     if job.cancelled:
         job.status = "cancelled"

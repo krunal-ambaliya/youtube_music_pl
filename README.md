@@ -55,8 +55,9 @@ Then open your browser at **[http://localhost:8000](http://localhost:8000)** (bo
    - **Advanced Configuration**: Windows-safe filename templates, concurrency slider (1–5 simultaneous downloads), rate limiting, and optional browser cookie import (`Chrome`, `Edge`, `Firefox`) for private or age-restricted content.
    - All settings persist automatically across reloads using `localStorage`.
 
-4. **Live Download & Monitoring**:
-   - Click **Download Selected (N)** to launch the background job.
+4. **High-Speed Pipelined Download & Conversion**:
+   - **Decoupled Pipeline Architecture**: Network downloads and CPU FFmpeg conversions run in independent worker pools.
+   - Once a track finishes raw streaming over the network (1–2 seconds), it is immediately queued into a background CPU conversion pool, freeing the network worker instantly to begin downloading the next track without blocking.
    - Real-time Server-Sent Events (SSE) stream overall progress and individual track progress (speed in MiB/s, percent, ETA, conversion stage).
    - Windows file lock errors (`WinError 32`) from antivirus scanners are retried automatically with exponential backoff.
    - If any track fails, remaining tracks continue uninterrupted, and a **"Retry Failed Tracks"** button is provided.
