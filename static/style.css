@@ -192,6 +192,15 @@ html, body {
   border-color: rgba(239, 68, 68, 0.3);
 }
 
+.sys-neutral .badge-dot {
+  background: #9ca3af;
+  box-shadow: none;
+}
+.sys-neutral {
+  color: #9ca3af;
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
 .nav-right {
   display: flex;
   align-items: center;

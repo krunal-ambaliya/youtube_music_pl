@@ -55,8 +55,9 @@ STATIC_DIR.mkdir(parents=True, exist_ok=True)
 # ---------------------------------------------------------
 def discover_and_inject_binaries():
     """
-    Check if ffmpeg/deno are on PATH.
-    If missing, scan WinGet Packages in %LOCALAPPDATA% to auto-inject without requiring terminal restart.
+    Check if ffmpeg/deno/node are on PATH.
+    1. If on Windows, scan WinGet Packages in %LOCALAPPDATA% to auto-inject without requiring terminal restart.
+    2. If ffmpeg is missing, check imageio-ffmpeg (crucial for Vercel & serverless environments).
     """
     local_app_data = os.environ.get("LOCALAPPDATA", "")
     if local_app_data:
@@ -73,6 +74,43 @@ def discover_and_inject_binaries():
                             os.environ["PATH"] = bin_dir + os.pathsep + os.environ["PATH"]
                     except Exception as e:
                         logger.warning(f"Error scanning winget packages for {binary_name}: {e}")
+
+    # Fallback to imageio-ffmpeg if ffmpeg is still not found (e.g. on Vercel or minimal Linux)
+    if not shutil.which("ffmpeg"):
+        try:
+            import imageio_ffmpeg
+            ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+            if ffmpeg_exe and os.path.exists(ffmpeg_exe):
+                ffmpeg_dir = os.path.dirname(ffmpeg_exe)
+                base_name = os.path.basename(ffmpeg_exe).lower()
+                expected_name = "ffmpeg.exe" if sys.platform == "win32" else "ffmpeg"
+                
+                # If the binary has a version suffix (like ffmpeg-linux64-v4.1), link or copy to standard 'ffmpeg'
+                if base_name != expected_name:
+                    target_dir = Path("/tmp/bin") if os.environ.get("VERCEL") else Path(ffmpeg_dir)
+                    target_dir.mkdir(parents=True, exist_ok=True)
+                    target_bin = target_dir / expected_name
+                    if not target_bin.exists():
+                        try:
+                            target_bin.symlink_to(ffmpeg_exe)
+                        except Exception:
+                            try:
+                                shutil.copy2(ffmpeg_exe, target_bin)
+                                if sys.platform != "win32":
+                                    os.chmod(target_bin, 0o755)
+                            except Exception:
+                                pass
+                    if target_bin.exists():
+                        os.environ["PATH"] = str(target_dir) + os.pathsep + os.environ["PATH"]
+                    else:
+                        os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ["PATH"]
+                else:
+                    os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ["PATH"]
+                logger.info(f"Auto-injected imageio-ffmpeg at {ffmpeg_exe} into PATH.")
+        except ImportError:
+            pass
+        except Exception as e:
+            logger.warning(f"imageio-ffmpeg injection error: {e}")
 
 discover_and_inject_binaries()
 
@@ -99,17 +137,44 @@ def cleanup_legacy_na_files():
 cleanup_legacy_na_files()
 
 def check_system_tools() -> Dict[str, Any]:
+    discover_and_inject_binaries()
     ffmpeg_path = shutil.which("ffmpeg")
     deno_path = shutil.which("deno")
+    node_path = shutil.which("node")
     is_win = sys.platform == "win32"
+    is_vercel = bool(os.environ.get("VERCEL"))
+    
+    has_js_engine = bool(deno_path or node_path)
+    js_engine_name = "Deno" if deno_path else ("Node.js" if node_path else None)
+
+    # Determine platform and recommended install commands
+    if is_win:
+        platform_name = "windows"
+        ffmpeg_cmd = "winget install Gyan.FFmpeg"
+        deno_cmd = "winget install DenoLand.Deno"
+    elif is_vercel:
+        platform_name = "vercel"
+        ffmpeg_cmd = "imageio-ffmpeg in requirements.txt"
+        deno_cmd = "Node.js (Serverless built-in)"
+    else:
+        platform_name = "linux"
+        ffmpeg_cmd = "sudo apt update && sudo apt install -y ffmpeg"
+        deno_cmd = "curl -fsSL https://deno.land/install.sh | sh"
+
     return {
         "ffmpeg_installed": bool(ffmpeg_path),
         "ffmpeg_path": ffmpeg_path,
         "deno_installed": bool(deno_path),
         "deno_path": deno_path,
+        "node_installed": bool(node_path),
+        "node_path": node_path,
+        "has_js_engine": has_js_engine,
+        "js_engine_name": js_engine_name,
         "ytdlp_version": yt_dlp.version.__version__,
-        "winget_ffmpeg_cmd": "winget install Gyan.FFmpeg" if is_win else "sudo apt update && sudo apt install -y ffmpeg",
-        "winget_deno_cmd": "winget install DenoLand.Deno" if is_win else "curl -fsSL https://deno.land/install.sh | sh",
+        "is_vercel": is_vercel,
+        "platform": platform_name,
+        "winget_ffmpeg_cmd": ffmpeg_cmd,
+        "winget_deno_cmd": deno_cmd,
     }
 
 

@@ -220,27 +220,55 @@ async function fetchSystemStatus() {
     const data = await res.json();
     state.systemStatus = data;
 
+    // FFmpeg status (Required for audio format conversion)
     updateSysBadge(el.ffmpegPill, data.ffmpeg_installed, "FFmpeg 6.1");
-    updateSysBadge(el.denoPill, data.deno_installed, "Deno Native Core");
+
+    // JS Engine status (Deno or Node.js - optional for yt-dlp challenge solving)
+    if (el.denoPill) {
+      if (data.deno_installed) {
+        updateSysBadge(el.denoPill, true, "Deno Native Core");
+      } else if (data.node_installed) {
+        updateSysBadge(el.denoPill, true, "Node.js JS Engine");
+      } else {
+        // Deno/Node are optional - mark as neutral/optional rather than a critical failure
+        el.denoPill.className = "sys-badge sys-neutral";
+        const txt = el.denoPill.querySelector(".badge-text");
+        if (txt) txt.textContent = "JS Core (Optional)";
+      }
+    }
+
     if (el.ytdlpVersionLabel) {
       const txt = el.ytdlpVersionLabel.querySelector(".badge-text");
       if (txt) txt.textContent = `yt-dlp v${data.ytdlp_version}`;
     }
 
-    if (!data.ffmpeg_installed || !data.deno_installed) {
+    // Only display warning banner if FFmpeg is actually missing (Deno is optional)
+    if (!data.ffmpeg_installed) {
       el.warningBanner.classList.remove("hidden");
       el.warningCommands.innerHTML = "";
-      if (!data.ffmpeg_installed) {
+
+      const bannerTitle = document.getElementById("warning-banner-title");
+      const bannerText = document.getElementById("warning-banner-text");
+
+      if (data.is_vercel) {
+        if (bannerTitle) bannerTitle.textContent = "Vercel Serverless Notice:";
+        if (bannerText) bannerText.textContent = "Re-deploy to Vercel with imageio-ffmpeg in requirements.txt, or deploy to Google Cloud Run / GCP for full playlist conversion without timeouts:";
+        
+        const c1 = document.createElement("code");
+        c1.textContent = "gcloud run deploy --source .";
+        c1.onclick = () => copyText("gcloud run deploy --source .");
+        el.warningCommands.appendChild(c1);
+      } else {
+        if (bannerTitle) bannerTitle.textContent = "FFmpeg Missing:";
+        if (bannerText) {
+          bannerText.textContent = data.platform === "windows" 
+            ? "Install required tools via Windows Package Manager:" 
+            : "Install FFmpeg via package manager:";
+        }
         const c1 = document.createElement("code");
         c1.textContent = data.winget_ffmpeg_cmd;
         c1.onclick = () => copyText(data.winget_ffmpeg_cmd);
         el.warningCommands.appendChild(c1);
-      }
-      if (!data.deno_installed) {
-        const c2 = document.createElement("code");
-        c2.textContent = data.winget_deno_cmd;
-        c2.onclick = () => copyText(data.winget_deno_cmd);
-        el.warningCommands.appendChild(c2);
       }
     } else {
       el.warningBanner.classList.add("hidden");
