@@ -10,8 +10,9 @@ import zipfile
 import logging
 import subprocess
 import threading
+import queue
 from pathlib import Path
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 from concurrent.futures import ThreadPoolExecutor
 
 import yt_dlp
@@ -39,8 +40,12 @@ logger = logging.getLogger("MusicPlaylistDownloader")
 # Base directory
 BASE_DIR = Path(__file__).resolve().parent
 
+# Serverless environment detection (Vercel, AWS Lambda, Cloud Run serverless)
+IS_SERVERLESS = bool(os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"))
+SERVERLESS_MAX_SAFE_TRACKS = 15
+
 # Support serverless read-only filesystems (e.g., Vercel / AWS Lambda use /tmp) or custom DOWNLOADS_DIR
-if os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
+if IS_SERVERLESS:
     DOWNLOADS_DIR = Path("/tmp/downloads")
 else:
     DOWNLOADS_DIR = Path(os.environ.get("DOWNLOADS_DIR", BASE_DIR / "downloads"))
@@ -178,6 +183,8 @@ def check_system_tools() -> Dict[str, Any]:
         "js_engine_name": js_engine_name,
         "ytdlp_version": yt_dlp.version.__version__,
         "is_vercel": is_vercel,
+        "is_serverless": IS_SERVERLESS,
+        "serverless_limit_notice": "Serverless platform detected. Execution limits may terminate jobs taking >60s. For large playlists (50-200 tracks), run via Docker or VM." if IS_SERVERLESS else None,
         "platform": platform_name,
         "winget_ffmpeg_cmd": ffmpeg_cmd,
         "winget_deno_cmd": deno_cmd,
@@ -222,7 +229,8 @@ class DownloadOptions(BaseModel):
     prefix_index: bool = True
     skip_existing: bool = True
     filename_template: str = "%(playlist_index)02d - %(title)s.%(ext)s"
-    concurrency: int = Field(default=3, ge=1, le=5)
+    concurrency: int = Field(default=3, ge=1, le=8)
+    conversion_concurrency: int = Field(default=2, ge=1, le=8)
     retries: int = Field(default=3, ge=1, le=10)
     rate_limit: Optional[str] = None
     browser_cookies: Optional[str] = None
@@ -278,7 +286,43 @@ def detect_platform(url: str) -> str:
 
 
 # ---------------------------------------------------------
-# Download Job Manager
+# FFmpeg Subprocess Optimizer & Helpers
+# ---------------------------------------------------------
+def run_ffmpeg_command(cmd: List[str], timeout: int = 180) -> None:
+    """
+    Executes FFmpeg with:
+    - stdout discarded (DEVNULL) to avoid memory accumulation
+    - bounded stderr capture (tail only) to avoid unbounded buffer growth
+    - -nostats -loglevel error flags for minimal I/O and process overhead
+    """
+    optimized_cmd = [cmd[0], "-nostats", "-loglevel", "error"] + cmd[1:]
+    
+    proc = subprocess.Popen(
+        optimized_cmd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        stdin=subprocess.DEVNULL
+    )
+    
+    try:
+        _, stderr_bytes = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        raise RuntimeError(f"FFmpeg process timed out after {timeout} seconds.")
+    
+    if proc.returncode != 0:
+        tail_stderr = (stderr_bytes or b"")[-2048:].decode("utf-8", errors="replace").strip()
+        raise subprocess.CalledProcessError(
+            proc.returncode,
+            optimized_cmd,
+            output=None,
+            stderr=tail_stderr
+        )
+
+
+# ---------------------------------------------------------
+# Download Job Manager (Bounded Producer-Consumer Pipeline)
 # ---------------------------------------------------------
 class DownloadCancelledException(Exception):
     pass
@@ -309,7 +353,7 @@ class DownloadJob:
                 "index": item.index,
                 "title": item.title,
                 "artist": item.artist,
-                "status": "queued",  # queued, downloading, converting, done, skipped, failed
+                "status": "queued",  # queued, downloading, conversion_queued, converting, done, skipped, failed
                 "percent": 0.0,
                 "speed": "",
                 "eta": "",
@@ -322,12 +366,20 @@ class DownloadJob:
         self.total_count = len(items)
         self.listeners: List[asyncio.Queue] = []
 
-        # Decoupled Pipeline: High-speed network download pool + parallel CPU conversion pool
-        download_workers = max(1, options.concurrency)
-        convert_workers = max(2, min(4, os.cpu_count() or 2))
-        self._download_executor = ThreadPoolExecutor(max_workers=download_workers, thread_name_prefix="Downloader")
-        self._convert_executor = ThreadPoolExecutor(max_workers=convert_workers, thread_name_prefix="Converter")
-        self._convert_futures: List[Any] = []
+        # Configurable concurrency for bounded pipeline
+        self.download_workers = max(1, options.concurrency)
+        self.convert_workers = max(1, getattr(options, "conversion_concurrency", 2))
+
+        # Observability & timing metrics
+        self.active_downloads = 0
+        self.active_conversions = 0
+        self.start_time = time.time()
+        self.total_download_time = 0.0
+        self.total_convert_time = 0.0
+        self.total_zip_time = 0.0
+
+        # Bounded queue for pipeline backpressure
+        self.convert_queue: queue.Queue = queue.Queue(maxsize=max(4, self.convert_workers * 2))
         self._lock = threading.Lock()
 
     def add_listener(self, queue: asyncio.Queue):
@@ -354,13 +406,17 @@ class DownloadJob:
 
     def update_overall(self):
         percent = round(((self.completed_count + self.failed_count) / self.total_count) * 100, 1) if self.total_count > 0 else 100
+        queued_conv = self.convert_queue.qsize() if hasattr(self, "convert_queue") else 0
         self.broadcast({
             "type": "overall_update",
             "completed_count": self.completed_count,
             "failed_count": self.failed_count,
             "total_count": self.total_count,
             "percent": percent,
-            "status": self.status
+            "status": self.status,
+            "active_downloads": self.active_downloads,
+            "active_conversions": self.active_conversions,
+            "queued_conversions": queued_conv
         })
 
     def cancel(self):
@@ -369,11 +425,15 @@ class DownloadJob:
         self.cancelled = True
         self.status = "cancelled"
         logger.info(f"Job {self.job_id} marked as cancelled by user.")
-        try:
-            self._download_executor.shutdown(wait=False, cancel_futures=True)
-            self._convert_executor.shutdown(wait=False, cancel_futures=True)
-        except Exception as e:
-            logger.warning(f"Error shutting down executors on cancel: {e}")
+
+        # Drain convert_queue immediately to release any blocked workers
+        if hasattr(self, "convert_queue"):
+            try:
+                while not self.convert_queue.empty():
+                    self.convert_queue.get_nowait()
+                    self.convert_queue.task_done()
+            except Exception:
+                pass
 
         # Mark all pending / active tracks as cancelled immediately so UI reflects stopped state
         with self._lock:
@@ -440,16 +500,16 @@ class DownloadJob:
 
     def safe_zip(self) -> Path:
         """Create ZIP stored archive containing ONLY the media files for the selected tracks in this job."""
+        zip_start = time.time()
         zip_filename = f"{self.clean_title}.zip"
         target_zip = DOWNLOADS_DIR / zip_filename
         
         # Cleanup temporary, obsolete NA, and non-audio files before archiving
         self.cleanup_temp_files()
         
-        AUDIO_EXTENSIONS = {".mp3", ".m4a", ".opus", ".flac", ".wav", ".ogg", ".aac"}
+        AUDIO_EXTENSIONS = {".mp3", ".m4a", ".opus", ".flac", ".wav", ".ogg", ".aac", ".webm"}
         VIDEO_EXTENSIONS = {".mp4", ".mkv", ".webm", ".mov"}
         
-        # Collect strictly the files corresponding to the selected items in this job
         valid_indices = {f"{itm.index:02d}" for itm in self.items}
         valid_titles = {sanitize_filename(itm.title).lower() for itm in self.items}
         
@@ -470,21 +530,17 @@ class DownloadJob:
                     if not (self.options.save_thumbnails and ext in [".jpg", ".png"]):
                         continue
 
-            # Never include temporary, zip, or NA files
             if name.endswith((".part", ".ytdl", ".temp", ".zip")) or name.startswith(("NA -", "NA_", "NA.")):
                 continue
             
-            # If prefix_index was used, match track indices e.g. "01 - " or "01."
             if self.options.prefix_index:
                 prefix = name[:2]
                 if prefix in valid_indices and (len(name) > 2 and name[2] in [" ", "-", "."]):
                     files_to_zip.append(file_path)
             else:
-                # If prefix_index was not used, match sanitized track title
                 if any(t in name.lower() for t in valid_titles):
                     files_to_zip.append(file_path)
 
-        # Fallback: if no files matched strict filters, include valid media files only
         if not files_to_zip:
             for file_path in sorted(self.download_dir.iterdir()):
                 ext = file_path.suffix.lower()
@@ -492,7 +548,22 @@ class DownloadJob:
                 if file_path.is_file() and is_media and not file_path.name.startswith(("NA -", "NA_")):
                     files_to_zip.append(file_path)
 
-        # Retry logic for Windows file lock (WinError 32)
+        # Optimization: Avoid redundant duplicate ZIP creation if existing archive is fresh and complete
+        if target_zip.exists() and files_to_zip:
+            try:
+                zip_mtime = target_zip.stat().st_mtime
+                if all(f.stat().st_mtime <= zip_mtime for f in files_to_zip):
+                    with zipfile.ZipFile(target_zip, "r") as zf:
+                        if len(zf.namelist()) == len(files_to_zip):
+                            logger.info(f"Reusing existing valid ZIP archive: {target_zip.name} ({len(files_to_zip)} files)")
+                            self.zip_path = target_zip
+                            self.zip_size_bytes = target_zip.stat().st_size
+                            self.total_zip_time = time.time() - zip_start
+                            return target_zip
+            except Exception:
+                pass
+
+        # Write ZIP_STORED (zero re-compression, instant speed for already-compressed media)
         for attempt in range(5):
             try:
                 with zipfile.ZipFile(target_zip, "w", compression=zipfile.ZIP_STORED) as zf:
@@ -506,27 +577,55 @@ class DownloadJob:
         self.zip_path = target_zip
         if target_zip.exists():
             self.zip_size_bytes = target_zip.stat().st_size
+        self.total_zip_time = time.time() - zip_start
         return target_zip
 
 # Active jobs storage
 jobs: Dict[str, DownloadJob] = {}
 
 
+def check_existing_target(job: DownloadJob, item: TrackItem) -> Optional[Path]:
+    """Check if a valid output file already exists for this track to skip re-downloading."""
+    if not job.options.skip_existing:
+        return None
+    idx_str = f"{item.index:02d}"
+    AUDIO_EXTENSIONS = {".mp3", ".m4a", ".opus", ".flac", ".wav", ".ogg", ".aac"}
+    VIDEO_EXTENSIONS = {".mp4", ".mkv", ".webm"}
+    allowed_exts = AUDIO_EXTENSIONS if job.options.type == "audio" else VIDEO_EXTENSIONS
+    if job.options.type == "audio" and job.options.audio_format != "best":
+        allowed_exts = {f".{job.options.audio_format}"}
+
+    for p in job.download_dir.iterdir():
+        if not p.is_file():
+            continue
+        if p.suffix.lower() not in allowed_exts:
+            continue
+        if p.name.endswith((".part", ".ytdl", ".temp", ".zip")):
+            continue
+        if p.stat().st_size < 10240:
+            continue
+        if job.options.prefix_index:
+            if p.name.startswith((f"{idx_str} -", f"{idx_str}.", f"{idx_str}_", f"{idx_str} ")):
+                return p
+        else:
+            clean_title = sanitize_filename(item.title).lower()
+            if clean_title and clean_title in p.name.lower():
+                return p
+    return None
+
+
 def find_downloaded_file(job: DownloadJob, item: TrackItem, info: Dict[str, Any]) -> Optional[Path]:
     """Robustly locate the downloaded media file for a track."""
-    # 1. Check requested_downloads
     if info.get("requested_downloads"):
         for req in info["requested_downloads"]:
             fp = req.get("filepath")
             if fp and os.path.exists(fp):
                 return Path(fp)
 
-    # 2. Check _filename
     fn = info.get("_filename")
     if fn and os.path.exists(fn):
         return Path(fn)
 
-    # 3. Search directory for files matching track index prefix
     idx_prefix = f"{item.index:02d}"
     for p in job.download_dir.iterdir():
         if not p.is_file():
@@ -536,7 +635,6 @@ def find_downloaded_file(job: DownloadJob, item: TrackItem, info: Dict[str, Any]
         if p.name.startswith((f"{idx_prefix} -", f"{idx_prefix}.", f"{idx_prefix}_", f"{idx_prefix} ")):
             return p
 
-    # 4. Search directory for files containing track ID or sanitized title
     clean_title = sanitize_filename(item.title).lower()
     for p in job.download_dir.iterdir():
         if not p.is_file():
@@ -549,19 +647,27 @@ def find_downloaded_file(job: DownloadJob, item: TrackItem, info: Dict[str, Any]
     return None
 
 
-def run_single_download(job: DownloadJob, item: TrackItem):
-    """Worker function executed in thread pool for one track."""
+def run_single_download(job: DownloadJob, item: TrackItem) -> Tuple[Optional[Path], Optional[Dict[str, Any]]]:
+    """Worker function executed in download pool for one track. Returns (raw_path, info)."""
     if job.cancelled:
         job.update_track(item.id, status="cancelled", eta="Cancelled", error="Download cancelled.")
-        return
+        return None, None
+
+    # Check cache / existing completed track
+    existing_path = check_existing_target(job, item)
+    if existing_path:
+        logger.info(f"Skipping track {item.id} ({item.title}): already exists at {existing_path.name}")
+        job.update_track(item.id, status="done", percent=100.0, speed="", eta="Existing", file_path=str(existing_path))
+        with job._lock:
+            job.completed_count += 1
+            job.update_overall()
+        return None, None
 
     job.update_track(item.id, status="downloading", percent=0.0, speed="", eta="")
     
-    # Build yt-dlp options
     opts = job.options
     video_url = f"https://www.youtube.com/watch?v={item.id}"
     
-    # Progress hook callback
     def progress_hook(d):
         if job.cancelled:
             raise DownloadCancelledException("Download cancelled by user.")
@@ -587,7 +693,6 @@ def run_single_download(job: DownloadJob, item: TrackItem):
         elif status == "finished":
             job.update_track(item.id, status="conversion_queued", percent=100.0, speed="", eta="Convert-Q")
 
-    # Determine outtmpl and eliminate NA by resolving playlist_index explicitly
     template = opts.filename_template.strip()
     if not template:
         template = "%(playlist_index)02d - %(title)s.%(ext)s" if opts.prefix_index else "%(title)s.%(ext)s"
@@ -600,19 +705,21 @@ def run_single_download(job: DownloadJob, item: TrackItem):
             template = f"{idx_str} - {template}"
     else:
         template = re.sub(r'%\(playlist_index\)(?:0?\d*d|s)?\s*[-_]?\s*', '', template)
+        # Prevent collisions if playlist contains tracks with duplicate titles
+        clean_title = sanitize_filename(item.title).lower()
+        title_occurrences = sum(1 for itm in job.items if sanitize_filename(itm.title).lower() == clean_title)
+        if title_occurrences > 1:
+            template = f"{template} (%(id)s)"
 
-    # Strip any accidental literal 'NA - ' or 'NA_'
     template = re.sub(r'^NA\s*[-_.]\s*', '', template)
-
     outtmpl = str(job.download_dir / template)
 
-    # Detect ffmpeg directory
     ffmpeg_exe = shutil.which("ffmpeg")
     ffmpeg_dir = os.path.dirname(ffmpeg_exe) if ffmpeg_exe else None
 
     ydl_opts: Dict[str, Any] = {
         "outtmpl": outtmpl,
-        "outtmpl_na_placeholder": "",  # Never allow yt-dlp to output 'NA'
+        "outtmpl_na_placeholder": "",
         "quiet": True,
         "no_warnings": True,
         "nocheckcertificate": True,
@@ -637,7 +744,6 @@ def run_single_download(job: DownloadJob, item: TrackItem):
         "Accept-Language": "en-US,en;q=0.9",
     }
 
-    # Cookie support: Check YOUTUBE_COOKIES env var, local cookies.txt, or browser cookies
     cookie_env = os.environ.get("YOUTUBE_COOKIES") or os.environ.get("COOKIES")
     cookies_file = BASE_DIR / "cookies.txt"
     if cookie_env and cookie_env.strip():
@@ -670,39 +776,25 @@ def run_single_download(job: DownloadJob, item: TrackItem):
         else:
             ydl_opts["format"] = f"bestvideo[height<={opts.video_quality}]+bestaudio/best[height<={opts.video_quality}]/best"
 
+    # Optimization: Do NOT download thumbnails if neither cover art embedding nor saving thumbnails is requested
     if opts.embed_cover_art or opts.save_thumbnails:
         ydl_opts["writethumbnail"] = True
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(video_url, download=True, extra_info={"playlist_index": item.index})
-            
             raw_path = find_downloaded_file(job, item, info)
-
-            # If raw file downloaded, dispatch to conversion pool with status 'conversion_queued'
-            if raw_path and raw_path.exists():
-                job.update_track(item.id, status="conversion_queued", speed="", eta="Convert-Q", percent=100.0)
-                with job._lock:
-                    if not job.cancelled:
-                        fut = job._convert_executor.submit(run_single_conversion, job, item, raw_path, info)
-                        job._convert_futures.append(fut)
-                return
-            else:
-                job.update_track(item.id, status="done", percent=100.0, speed="", eta="")
-                with job._lock:
-                    job.completed_count += 1
-                    job.update_overall()
-                return
+            return raw_path, info
 
     except DownloadCancelledException:
-        logger.info(f"Track {item.id} cancelled.")
+        logger.info(f"Track {item.id} download cancelled.")
         job.update_track(item.id, status="cancelled", eta="Cancelled", error="Cancelled by user.")
-        return
+        return None, None
 
     except Exception as e:
         if job.cancelled:
             job.update_track(item.id, status="cancelled", eta="Cancelled", error="Cancelled by user.")
-            return
+            return None, None
 
         err_msg = str(e)
         logger.warning(f"Error downloading track {item.id} ({item.title}): {err_msg}")
@@ -722,29 +814,15 @@ def run_single_download(job: DownloadJob, item: TrackItem):
                 with yt_dlp.YoutubeDL(fallback_opts) as fallback_ydl:
                     info = fallback_ydl.extract_info(video_url, download=True, extra_info={"playlist_index": item.index})
                     raw_path = find_downloaded_file(job, item, info)
-
-                    if raw_path and raw_path.exists():
-                        job.update_track(item.id, status="conversion_queued", speed="", eta="Convert-Q", percent=100.0)
-                        with job._lock:
-                            if not job.cancelled:
-                                fut = job._convert_executor.submit(run_single_conversion, job, item, raw_path, info)
-                                job._convert_futures.append(fut)
-                        return
-                    else:
-                        job.update_track(item.id, status="done", percent=100.0, speed="", eta="")
-                        with job._lock:
-                            job.completed_count += 1
-                            job.update_overall()
-                        return
+                    return raw_path, info
             except Exception as retry_err:
                 err_msg = str(retry_err)
                 logger.warning(f"Fallback retry failed for track {item.id}: {err_msg}")
 
         if job.cancelled:
             job.update_track(item.id, status="cancelled", eta="Cancelled", error="Cancelled by user.")
-            return
+            return None, None
 
-        # Clean user-facing error message
         if "Video unavailable" in err_msg:
             clean_err = "Video unavailable or deleted"
         elif "Private video" in err_msg:
@@ -762,6 +840,7 @@ def run_single_download(job: DownloadJob, item: TrackItem):
         with job._lock:
             job.failed_count += 1
             job.update_overall()
+        return None, None
 
 
 def run_single_conversion(job: DownloadJob, item: TrackItem, raw_path: Path, info: Dict[str, Any]):
@@ -780,46 +859,74 @@ def run_single_conversion(job: DownloadJob, item: TrackItem, raw_path: Path, inf
 
     try:
         if opts.type == "audio":
-            target_ext = f".{opts.audio_format}" if opts.audio_format != "best" else raw_path.suffix.lower()
+            raw_ext = raw_path.suffix.lower()
+            
+            # Format optimization: determine target extension
+            if opts.audio_format == "best":
+                target_ext = raw_ext
+            else:
+                target_ext = f".{opts.audio_format}"
+            
             target_path = raw_path.with_suffix(target_ext)
 
-            # Check if re-encoding is needed
-            if opts.audio_format != "best" or raw_path.suffix.lower() != target_ext:
-                base_cmd = [ffmpeg_exe, "-y", "-i", str(raw_path), "-vn"]
+            is_best = (opts.audio_format == "best")
+            is_matching_codec = (raw_ext == target_ext)
+            can_stream_copy = is_best or is_matching_codec
 
-                fmt = opts.audio_format
-                q = opts.audio_quality
+            # If matching extension / best, and neither metadata nor cover art is requested:
+            # Skip FFmpeg entirely! (0% CPU, 0 seconds transcode time)
+            if can_stream_copy and not opts.embed_metadata and not opts.embed_cover_art:
+                logger.info(f"Preserving original stream without transcoding for track {item.id} ({raw_path.name})")
+                target_path = raw_path
+            else:
+                # If target_path is the same path as raw_path, FFmpeg cannot write directly to it!
+                # We use an intermediate temp file for the output, then atomically replace.
+                same_path = (raw_path.resolve() == target_path.resolve())
+                if same_path:
+                    ffmpeg_out = raw_path.with_name(f"{raw_path.stem}.tmp_out{target_ext}")
+                else:
+                    ffmpeg_out = target_path
+
+                base_cmd = [ffmpeg_exe, "-y", "-i", str(raw_path)]
+                
                 audio_codec_args = []
-                if fmt == "mp3":
-                    audio_codec_args.extend(["-c:a", "libmp3lame"])
-                    if q != "best":
-                        audio_codec_args.extend(["-b:a", f"{q}k"])
-                    else:
-                        audio_codec_args.extend(["-q:a", "0"])
-                elif fmt == "m4a":
-                    audio_codec_args.extend(["-c:a", "aac"])
-                    if q != "best":
-                        audio_codec_args.extend(["-b:a", f"{q}k"])
-                    else:
-                        audio_codec_args.extend(["-b:a", "256k"])
-                elif fmt == "opus":
-                    audio_codec_args.extend(["-c:a", "libopus"])
-                    if q != "best":
-                        audio_codec_args.extend(["-b:a", f"{q}k"])
-                    else:
-                        audio_codec_args.extend(["-b:a", "192k"])
-                elif fmt == "flac":
-                    audio_codec_args.extend(["-c:a", "flac"])
-                elif fmt == "wav":
-                    audio_codec_args.extend(["-c:a", "pcm_s16le"])
-                elif fmt == "ogg":
-                    audio_codec_args.extend(["-c:a", "libvorbis"])
-                    if q != "best":
-                        audio_codec_args.extend(["-b:a", f"{q}k"])
-                    else:
-                        audio_codec_args.extend(["-q:a", "6"])
+                if can_stream_copy:
+                    # Stream copy: 30x faster, zero quality loss, preserves original codec
+                    audio_codec_args = ["-c:a", "copy"]
+                else:
+                    # Optimized transcoding with chosen codec and quality
+                    fmt = opts.audio_format
+                    q = opts.audio_quality
+                    if fmt == "mp3":
+                        audio_codec_args.extend(["-c:a", "libmp3lame"])
+                        if q != "best":
+                            audio_codec_args.extend(["-b:a", f"{q}k"])
+                        else:
+                            audio_codec_args.extend(["-q:a", "0"])
+                    elif fmt == "m4a":
+                        audio_codec_args.extend(["-c:a", "aac"])
+                        if q != "best":
+                            audio_codec_args.extend(["-b:a", f"{q}k"])
+                        else:
+                            audio_codec_args.extend(["-b:a", "256k"])
+                    elif fmt == "opus":
+                        audio_codec_args.extend(["-c:a", "libopus"])
+                        if q != "best":
+                            audio_codec_args.extend(["-b:a", f"{q}k"])
+                        else:
+                            audio_codec_args.extend(["-b:a", "192k"])
+                    elif fmt == "flac":
+                        audio_codec_args.extend(["-c:a", "flac"])
+                    elif fmt == "wav":
+                        audio_codec_args.extend(["-c:a", "pcm_s16le"])
+                    elif fmt == "ogg":
+                        audio_codec_args.extend(["-c:a", "libvorbis"])
+                        if q != "best":
+                            audio_codec_args.extend(["-b:a", f"{q}k"])
+                        else:
+                            audio_codec_args.extend(["-q:a", "6"])
 
-                # Metadata tags
+                # Metadata tags (optional)
                 metadata_args = []
                 if opts.embed_metadata:
                     title = item.title or info.get("title") or ""
@@ -833,10 +940,10 @@ def run_single_conversion(job: DownloadJob, item: TrackItem, raw_path: Path, inf
                         "-metadata", f"track={item.index}",
                     ])
 
-                # Cover art thumbnail
+                # Cover art thumbnail (optional)
                 thumb_file = None
                 thumb_args = []
-                if opts.embed_cover_art and fmt in ["mp3", "m4a", "flac"]:
+                if opts.embed_cover_art and (fmt in ["mp3", "m4a", "flac"] if not is_best else target_ext in [".mp3", ".m4a", ".flac"]):
                     stem = raw_path.stem
                     parent = raw_path.parent
                     for cand_ext in [".jpg", ".jpeg", ".png", ".webp"]:
@@ -846,8 +953,7 @@ def run_single_conversion(job: DownloadJob, item: TrackItem, raw_path: Path, inf
                             break
                     if thumb_file:
                         thumb_args.extend(["-i", str(thumb_file), "-map", "0:a", "-map", "1:v"])
-                        if fmt == "mp3":
-                            # Transcode cover image to mjpeg for ID3v2 attached picture compatibility
+                        if fmt == "mp3" or target_ext == ".mp3":
                             thumb_args.extend([
                                 "-c:v", "mjpeg",
                                 "-disposition:v:0", "attached_pic",
@@ -861,30 +967,36 @@ def run_single_conversion(job: DownloadJob, item: TrackItem, raw_path: Path, inf
                                 "-disposition:v:0", "attached_pic"
                             ])
 
-                # Run FFmpeg with cover art, falling back to audio-only if image embedding fails
-                full_cmd = [ffmpeg_exe, "-y", "-i", str(raw_path)]
+                full_cmd = list(base_cmd)
                 if thumb_args:
                     full_cmd.extend(thumb_args)
                 else:
                     full_cmd.append("-vn")
                 full_cmd.extend(audio_codec_args)
                 full_cmd.extend(metadata_args)
-                full_cmd.append(str(target_path))
+                full_cmd.append(str(ffmpeg_out))
 
                 try:
-                    subprocess.run(full_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+                    run_ffmpeg_command(full_cmd, timeout=180)
                 except subprocess.CalledProcessError as cp_err:
-                    logger.warning(f"FFmpeg with thumbnail failed ({cp_err}), retrying audio-only transcode...")
-                    fallback_cmd = base_cmd + audio_codec_args + metadata_args + [str(target_path)]
-                    subprocess.run(fallback_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+                    if thumb_args:
+                        logger.warning(f"FFmpeg with thumbnail failed ({cp_err.stderr[:100] if cp_err.stderr else cp_err}), retrying audio-only...")
+                        fallback_cmd = base_cmd + ["-vn"] + audio_codec_args + metadata_args + [str(ffmpeg_out)]
+                        run_ffmpeg_command(fallback_cmd, timeout=180)
+                    else:
+                        raise
 
-                # Delete raw intermediate file
-                if target_path.exists() and target_path.stat().st_size > 0:
-                    raw_path.unlink(missing_ok=True)
+                # Verify output file exists and is valid before deleting raw intermediate
+                if ffmpeg_out.exists() and ffmpeg_out.stat().st_size > 1024:
+                    if same_path:
+                        raw_path.unlink(missing_ok=True)
+                        ffmpeg_out.replace(target_path)
+                    else:
+                        raw_path.unlink(missing_ok=True)
                     if thumb_file and not opts.save_thumbnails:
                         thumb_file.unlink(missing_ok=True)
-            else:
-                target_path = raw_path
+                else:
+                    raise RuntimeError(f"Output verification failed: {ffmpeg_out} is missing or empty.")
 
         else:
             # Video mode
@@ -892,14 +1004,14 @@ def run_single_conversion(job: DownloadJob, item: TrackItem, raw_path: Path, inf
             target_path = raw_path.with_suffix(target_ext)
             if raw_path.suffix.lower() != target_ext:
                 cmd = [ffmpeg_exe, "-y", "-i", str(raw_path), "-c", "copy", str(target_path)]
-                subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
-                if target_path.exists() and target_path.stat().st_size > 0:
+                run_ffmpeg_command(cmd, timeout=300)
+                if target_path.exists() and target_path.stat().st_size > 1024:
                     raw_path.unlink(missing_ok=True)
 
         if job.cancelled:
             return
 
-        job.update_track(item.id, status="done", percent=100.0, speed="", eta="")
+        job.update_track(item.id, status="done", percent=100.0, speed="", eta="", file_path=str(target_path))
         with job._lock:
             job.completed_count += 1
             job.update_overall()
@@ -916,40 +1028,128 @@ def run_single_conversion(job: DownloadJob, item: TrackItem, raw_path: Path, inf
 
 
 def run_job_thread(job: DownloadJob):
-    """Pipelined master worker running background downloads and conversions."""
-    logger.info(f"Starting pipelined job {job.job_id} for playlist '{job.playlist_title}' with {job.total_count} tracks.")
-    download_futures = []
+    """
+    Optimized bounded producer-consumer pipeline:
+    - Bounded download pool (default 3 workers)
+    - Bounded conversion pool (default 2 workers)
+    - Bounded conversion queue with backpressure so disk and RAM are not overwhelmed
+    - Real-time duration logging and queue observability
+    """
+    job_start_time = time.time()
+    logger.info(
+        f"Starting optimized pipeline for job {job.job_id} "
+        f"({job.total_count} tracks, format: {job.options.audio_format if job.options.type == 'audio' else job.options.video_format}, "
+        f"dl_workers: {job.download_workers}, conv_workers: {job.convert_workers})"
+    )
+
+    # Queue of items to be downloaded
+    item_queue: queue.Queue = queue.Queue()
     for item in job.items:
-        if job.cancelled:
-            break
-        download_futures.append(job._download_executor.submit(run_single_download, job, item))
+        item_queue.put(item)
 
-    # Wait for all network downloads to finish with immediate break on cancel
-    for f in download_futures:
-        if job.cancelled:
-            break
-        try:
-            f.result()
-        except Exception as e:
-            logger.error(f"Download pipeline task error: {e}")
+    # Bounded queue of downloaded raw files ready for conversion
+    # maxsize creates backpressure: download workers wait if conversion queue is full!
+    convert_queue: queue.Queue = queue.Queue(maxsize=max(4, job.convert_workers * 2))
+    job.convert_queue = convert_queue
 
-    try:
-        job._download_executor.shutdown(wait=False, cancel_futures=True)
-    except Exception:
-        pass
+    # Download workers
+    def download_worker():
+        while not job.cancelled:
+            try:
+                item = item_queue.get_nowait()
+            except queue.Empty:
+                break
+            
+            with job._lock:
+                job.active_downloads += 1
+                job.update_overall()
 
-    # Wait for all background conversions to complete with immediate break on cancel
-    while not job.cancelled:
-        with job._lock:
-            pending = [f for f in job._convert_futures if not f.done()]
-        if not pending:
-            break
-        time.sleep(0.15)
+            t0 = time.time()
+            try:
+                raw_path, info = run_single_download(job, item)
+                duration = time.time() - t0
+                with job._lock:
+                    job.total_download_time += duration
+                
+                if raw_path and raw_path.exists() and not job.cancelled:
+                    # Enqueue for conversion with backpressure (blocks if convert_queue is full)
+                    job.update_track(item.id, status="conversion_queued", eta="Convert-Q", percent=100.0)
+                    while not job.cancelled:
+                        try:
+                            convert_queue.put((item, raw_path, info), timeout=0.25)
+                            break
+                        except queue.Full:
+                            continue
+            except Exception as e:
+                logger.error(f"Download worker error on track {item.id}: {e}")
+            finally:
+                item_queue.task_done()
+                with job._lock:
+                    job.active_downloads = max(0, job.active_downloads - 1)
+                    job.update_overall()
 
-    try:
-        job._convert_executor.shutdown(wait=False, cancel_futures=True)
-    except Exception:
-        pass
+    # Conversion workers
+    def convert_worker():
+        while not job.cancelled:
+            try:
+                entry = convert_queue.get(timeout=0.25)
+            except queue.Empty:
+                # If download queue is also empty and active downloads is 0, we are done
+                if item_queue.empty() and job.active_downloads == 0 and convert_queue.empty():
+                    break
+                continue
+
+            if entry is None or job.cancelled:
+                convert_queue.task_done()
+                break
+
+            item, raw_path, info = entry
+            with job._lock:
+                job.active_conversions += 1
+                job.update_overall()
+
+            t0 = time.time()
+            try:
+                run_single_conversion(job, item, raw_path, info)
+                duration = time.time() - t0
+                with job._lock:
+                    job.total_convert_time += duration
+            except Exception as e:
+                logger.error(f"Convert worker error on track {item.id}: {e}")
+            finally:
+                convert_queue.task_done()
+                with job._lock:
+                    job.active_conversions = max(0, job.active_conversions - 1)
+                    job.update_overall()
+
+    # Launch download and conversion threads
+    dl_threads = []
+    for i in range(job.download_workers):
+        t = threading.Thread(target=download_worker, name=f"DL-Worker-{i+1}", daemon=True)
+        t.start()
+        dl_threads.append(t)
+
+    conv_threads = []
+    for i in range(job.convert_workers):
+        t = threading.Thread(target=convert_worker, name=f"Conv-Worker-{i+1}", daemon=True)
+        t.start()
+        conv_threads.append(t)
+
+    # Wait for download threads with responsive cancellation check
+    for t in dl_threads:
+        while t.is_alive():
+            t.join(timeout=0.2)
+            if job.cancelled:
+                break
+
+    # Wait for conversion threads with responsive cancellation check
+    for t in conv_threads:
+        while t.is_alive():
+            t.join(timeout=0.2)
+            if job.cancelled:
+                break
+
+    total_job_time = time.time() - job_start_time
 
     if job.cancelled:
         job.status = "cancelled"
@@ -959,6 +1159,7 @@ def run_job_thread(job: DownloadJob):
                 job.safe_zip()
             except Exception as e:
                 logger.warning(f"Error packaging partial zip on cancel: {e}")
+        logger.info(f"Job {job.job_id} cancelled after {total_job_time:.2f}s ({job.completed_count} preserved).")
         return
 
     # Create ZIP archive
@@ -972,10 +1173,18 @@ def run_job_thread(job: DownloadJob):
         "status": "zipping"
     })
 
+    zip_start = time.time()
     try:
         zip_path = job.safe_zip()
+        job.total_zip_time = time.time() - zip_start
         job.status = "completed"
-        logger.info(f"Job {job.job_id} completed. ZIP size: {job.zip_size_bytes} bytes.")
+        logger.info(
+            f"Job {job.job_id} COMPLETED in {total_job_time:.2f}s! "
+            f"Metrics: Successful: {job.completed_count}/{job.total_count}, "
+            f"Download sum: {job.total_download_time:.2f}s, "
+            f"Conversion sum: {job.total_convert_time:.2f}s, "
+            f"ZIP packaging: {job.total_zip_time:.2f}s ({job.zip_size_bytes / (1024*1024):.1f} MB)"
+        )
         job.broadcast({
             "type": "completed",
             "job_id": job.job_id,
@@ -984,7 +1193,14 @@ def run_job_thread(job: DownloadJob):
             "failed": job.failed_count,
             "zip_filename": zip_path.name,
             "zip_size_bytes": job.zip_size_bytes,
-            "download_dir": str(job.download_dir.resolve())
+            "download_dir": str(job.download_dir.resolve()),
+            "metrics": {
+                "total_time_seconds": round(total_job_time, 2),
+                "download_time_sum": round(job.total_download_time, 2),
+                "convert_time_sum": round(job.total_convert_time, 2),
+                "zip_time_seconds": round(job.total_zip_time, 2),
+                "avg_conversion_time": round(job.total_convert_time / max(1, job.completed_count), 2)
+            }
         })
     except Exception as e:
         logger.error(f"Error packing ZIP for job {job.job_id}: {e}")
@@ -1187,6 +1403,11 @@ async def start_download(req: StartDownloadRequest, background_tasks: Background
     if not req.items:
         raise HTTPException(status_code=400, detail="No tracks selected for download.")
 
+    serverless_warning = None
+    if IS_SERVERLESS and len(req.items) > SERVERLESS_MAX_SAFE_TRACKS:
+        serverless_warning = f"Serverless warning: {len(req.items)} tracks requested. Serverless execution limits may terminate jobs taking >60s. For large playlists, deploy via Docker/VM."
+        logger.warning(serverless_warning)
+
     job_id = f"job_{int(time.time())}_{len(req.items)}"
     loop = asyncio.get_running_loop()
     
@@ -1202,7 +1423,12 @@ async def start_download(req: StartDownloadRequest, background_tasks: Background
     # Launch background thread
     background_tasks.add_task(run_job_thread, job)
 
-    return {"job_id": job_id, "total": len(req.items), "playlist_title": job.playlist_title}
+    return {
+        "job_id": job_id,
+        "total": len(req.items),
+        "playlist_title": job.playlist_title,
+        "serverless_warning": serverless_warning
+    }
 
 
 @app.get("/api/download/progress/{job_id}")
@@ -1273,7 +1499,7 @@ async def retry_failed_downloads(job_id: str, background_tasks: BackgroundTasks)
     old_job.failed_count = max(0, old_job.failed_count - len(failed_items))
     old_job.status = "running"
     old_job.cancelled = False
-    old_job._executor = ThreadPoolExecutor(max_workers=old_job.options.concurrency)
+    old_job.items = failed_items  # Process only the retried items
 
     background_tasks.add_task(run_job_thread, old_job)
     return {"success": True, "retry_count": len(failed_items)}
